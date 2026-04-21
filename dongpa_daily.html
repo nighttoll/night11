@@ -314,6 +314,40 @@
     margin-left: 6px;
     font-weight: 700;
   }
+  .order-title .loc-tag {
+    background: var(--blue);
+    color: var(--bg);
+  }
+  
+  .fill-condition {
+    background: rgba(122, 154, 184, 0.08);
+    border: 1px solid #3a4a5a;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 14px 0;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .fill-icon {
+    font-size: 18px;
+    line-height: 1;
+    margin-top: 2px;
+  }
+  .fill-text {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.6;
+    flex: 1;
+  }
+  .fill-text strong {
+    color: var(--blue);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .fill-hint {
+    color: var(--text-faint);
+    font-size: 11px;
+  }
   
   .order-main {
     display: grid;
@@ -882,11 +916,12 @@ function renderOrder(o) {
     ? '<span class="tag">부스트</span>' 
     : (o.boosterOn === 'candidate' ? '<span class="tag" style="background:var(--yellow);">후보</span>' : '');
   
-  const orderCmd = `SOXL 지정가 매수 ${o.estQty}주 @ $${o.bidPrice}`;
+  const orderCmd = `SOXL LOC 매수 ${o.estQty}주 @ $${o.bidPrice}`;
+  const premiumPct = o.mode === 'AG' ? '3.6%' : '4.5%';
   
   let warningHtml = '';
   if (o.shortage > 0) {
-    warningHtml = `<div class="warning">⚠️ 현금 부족으로 시드 축소: 원래 $${o.wantedSeed.toLocaleString()} → 실제 $${o.actualSeed.toLocaleString()}</div>`;
+    warningHtml += `<div class="warning">⚠️ 현금 부족으로 시드 축소: 원래 $${o.wantedSeed.toLocaleString()} → 실제 $${o.actualSeed.toLocaleString()}</div>`;
   }
   if (o.boosterOn === 'candidate') {
     warningHtml += `<div class="info">💡 부스트 진입 조건 만족. 20일 저가 대비 +3% 반등 확인 후 ON으로 전환 고려</div>`;
@@ -895,40 +930,48 @@ function renderOrder(o) {
   const html = `
     <div class="order-card">
       <div class="order-header">
-        <div class="order-title">🟢 오늘 매수 주문 ${boostTag}</div>
+        <div class="order-title">🟢 오늘 매수 주문 <span class="tag loc-tag">LOC</span> ${boostTag}</div>
         <div style="font-size:12px; color:var(--text-dim);">${modeBadge} · ${o.tierForSeed}/${o.currentSplit}</div>
       </div>
       
       <div class="order-main">
         <div class="order-field">
-          <div class="order-label">지정가</div>
+          <div class="order-label">LOC 지정가</div>
           <div class="order-value big">$${o.bidPrice}</div>
-          <div class="order-sub">전일종가 × ${o.mode === 'AG' ? '1.036' : '1.045'}</div>
+          <div class="order-sub">전일종가 × (1 + ${premiumPct})</div>
         </div>
         <div class="order-field">
-          <div class="order-label">수량</div>
+          <div class="order-label">주문 수량</div>
           <div class="order-value big">${o.estQty}주</div>
-          <div class="order-sub">$${(o.estQty * o.bidPrice).toFixed(2)}</div>
+          <div class="order-sub">시드 $${o.actualSeed.toLocaleString()} ÷ 지정가</div>
         </div>
       </div>
       
-      <div class="order-main">
+      <div class="fill-condition">
+        <div class="fill-icon">⚖️</div>
+        <div class="fill-text">
+          <strong>체결 조건:</strong> 오늘 종가 ≤ <strong>$${o.bidPrice}</strong> 이면 체결<br>
+          <span class="fill-hint">실제 체결가 = 오늘 종가 (지정가 아님)</span>
+        </div>
+      </div>
+      
+      <div class="order-main" style="margin-top:14px;">
         <div class="order-field">
-          <div class="order-label">시드</div>
+          <div class="order-label">시드 (주문 상한)</div>
           <div class="order-value">$${o.actualSeed.toLocaleString()}</div>
-          <div class="order-sub">IA ÷ ${o.currentSplit} × ${o.boosterOn === true ? '1.20' : '1.00'}</div>
+          <div class="order-sub">IA ÷ ${o.currentSplit} × ${o.boosterOn === true ? '1.20 (부스트)' : '1.00'}</div>
         </div>
         <div class="order-field">
-          <div class="order-label">체결시 매도목표</div>
+          <div class="order-label">체결 후 매도목표</div>
           <div class="order-value">$${o.sellTarget}</div>
-          <div class="order-sub">${o.holdDays}거래일 후 손절</div>
+          <div class="order-sub">체결가 × ${o.mode === 'SF' ? '1.018' : '1.060'} · ${o.holdDays}거래일 후 손절</div>
         </div>
       </div>
       
       ${warningHtml}
       
       <div class="order-actions" style="margin-top:14px;">
-        <button class="action-btn" id="copyBtn">📋 주문문구 복사</button>
+        <button class="action-btn" id="copyBtn">📋 LOC 주문문구 복사</button>
         <button class="action-btn primary" id="fillBtn">✅ 체결기록</button>
       </div>
     </div>
@@ -959,23 +1002,82 @@ function renderOrder(o) {
 // 체결 기록
 // ============================================
 function recordFill(o) {
-  const actualPrice = prompt('실제 체결가 입력 (미체결이면 취소):', o.bidPrice);
-  if (actualPrice === null) return;
+  const closePrice = prompt(
+    `체결 여부 확인\n\n` +
+    `LOC 지정가: $${o.bidPrice}\n` +
+    `주문 수량: ${o.estQty}주\n\n` +
+    `오늘 SOXL 종가를 입력하세요\n(취소 시 미체결 처리):`,
+    o.bidPrice
+  );
+  if (closePrice === null || closePrice === '') return;
   
-  const qty = prompt('실제 체결 수량:', o.estQty);
-  if (qty === null) return;
+  const closeNum = parseFloat(closePrice);
+  if (isNaN(closeNum) || closeNum <= 0) {
+    alert('올바른 가격을 입력하세요');
+    return;
+  }
+  
+  // LOC 체결 로직: 지정가 >= 종가면 체결 (가격은 종가)
+  const filled = o.bidPrice >= closeNum;
+  
+  if (!filled) {
+    // 미체결
+    const skipEntry = {
+      id: Date.now(),
+      date: fmtDate(new Date()),
+      mode: o.mode,
+      side: 'BUY',
+      orderPrice: o.bidPrice,
+      closePrice: closeNum,
+      qty: o.estQty,
+      tier: o.tierForSeed,
+      boosted: o.boosterOn === true,
+      status: 'skipped'
+    };
+    const history = STORE.get('history', []);
+    history.unshift(skipEntry);
+    STORE.set('history', history);
+    
+    alert(`미체결 처리됨\n\n종가 $${closeNum} > 지정가 $${o.bidPrice}\n(지정가보다 비싸서 미체결)\n\n기록에 저장됨`);
+    renderHistory();
+    return;
+  }
+  
+  // 체결: 실제 수량 확인 (기본: 주문 수량 그대로)
+  const qtyInput = prompt(
+    `✅ 체결됨!\n\n` +
+    `체결가 = 종가 $${closeNum}\n` +
+    `예상 수량: ${o.estQty}주\n\n` +
+    `실제 체결 수량 (기본 그대로면 OK):`,
+    o.estQty
+  );
+  if (qtyInput === null) return;
+  
+  const actualQty = parseInt(qtyInput);
+  if (isNaN(actualQty) || actualQty <= 0) {
+    alert('올바른 수량을 입력하세요');
+    return;
+  }
+  
+  // 체결가 기준으로 매도목표 재계산
+  const sfSell = parseFloat(document.getElementById('set_sfSell').value) / 100;
+  const agSell = parseFloat(document.getElementById('set_agSell').value) / 100;
+  const actualSellTarget = o.mode === 'SF'
+    ? Math.round(closeNum * (1 + sfSell) * 100) / 100
+    : Math.round(closeNum * (1 + agSell) * 100) / 100;
   
   const entry = {
     id: Date.now(),
     date: fmtDate(new Date()),
     mode: o.mode,
     side: 'BUY',
-    orderPrice: o.bidPrice,
-    fillPrice: parseFloat(actualPrice),
-    qty: parseInt(qty),
+    orderPrice: o.bidPrice,       // LOC 지정가
+    fillPrice: closeNum,          // 실제 체결가 = 종가
+    closePrice: closeNum,
+    qty: actualQty,
     tier: o.tierForSeed,
     boosted: o.boosterOn === true,
-    sellTarget: o.sellTarget,
+    sellTarget: actualSellTarget,
     holdDays: o.holdDays,
     status: 'filled'
   };
@@ -984,23 +1086,26 @@ function recordFill(o) {
   history.unshift(entry);
   STORE.set('history', history);
   
-  // 티어 +1, 현금 차감, 부스트 상태 확정
+  // 티어 +1, 현금 차감 (종가 기준)
   const cashInput = document.getElementById('cash');
   const tierInput = document.getElementById('tier');
-  cashInput.value = Math.max(0, parseFloat(cashInput.value) - entry.fillPrice * entry.qty);
+  cashInput.value = Math.max(0, parseFloat(cashInput.value) - closeNum * actualQty).toFixed(0);
   tierInput.value = parseInt(tierInput.value) + 1;
   saveFormState();
   
   // 부스트 candidate → ON 확정
-  if (o.boosterOn === 'candidate') {
-    STORE.set('boosterOn', true);
-  } else if (o.boosterOn === true) {
+  if (o.boosterOn === 'candidate' || o.boosterOn === true) {
     STORE.set('boosterOn', true);
   } else {
     STORE.set('boosterOn', false);
   }
   
-  alert('✓ 체결 기록 완료\n기록 탭에서 확인 가능');
+  alert(
+    `✓ 체결 기록 완료\n\n` +
+    `${actualQty}주 × $${closeNum} = $${(actualQty * closeNum).toFixed(2)}\n` +
+    `매도목표: $${actualSellTarget}\n\n` +
+    `기록 탭에서 확인 가능`
+  );
   renderHistory();
   calculateOrder();
 }
@@ -1021,18 +1126,37 @@ function renderHistory() {
   }
   
   listEl.innerHTML = history.map(h => {
-    const statusClass = h.status === 'filled' ? 'filled' : 'pending';
-    const statusText = h.status === 'filled' ? '체결' : '대기';
-    const sideColor = h.side === 'BUY' ? 'var(--green)' : 'var(--red)';
+    let statusClass, statusText, bodyHtml;
+    
+    if (h.status === 'skipped') {
+      statusClass = 'skipped';
+      statusText = '미체결';
+      bodyHtml = `
+        지정가 $${h.orderPrice} / 종가 $${h.closePrice.toFixed(2)}
+        <div style="font-size:11px; color:var(--text-faint); margin-top:4px;">
+          종가가 지정가보다 높아 미체결 (수량 ${h.qty}주 기준)
+        </div>
+      `;
+    } else {
+      statusClass = 'filled';
+      statusText = '체결';
+      const sideColor = h.side === 'BUY' ? 'var(--green)' : 'var(--red)';
+      bodyHtml = `
+        ${h.fillPrice.toFixed(2)} × ${h.qty} = $${(h.fillPrice * h.qty).toFixed(2)}
+        <div style="font-size:11px; color:var(--text-faint); margin-top:4px;">
+          지정가 $${h.orderPrice} · 체결가 $${h.fillPrice.toFixed(2)} (종가)${h.sellTarget ? ' · 목표 $' + h.sellTarget : ''} · 티어 ${h.tier}
+        </div>
+      `;
+    }
+    
     return `
       <div class="history-entry">
         <div class="history-top">
-          <span>${h.date} · <span style="color:${sideColor}">${h.side === 'BUY' ? '매수' : '매도'}</span> · ${h.mode}${h.boosted ? ' (부스트)' : ''}</span>
+          <span>${h.date} · <span style="color:${h.side === 'BUY' ? 'var(--green)' : 'var(--red)'}">${h.side === 'BUY' ? '매수' : '매도'}</span> · ${h.mode}${h.boosted ? ' (부스트)' : ''}</span>
           <span class="history-status ${statusClass}">${statusText}</span>
         </div>
         <div class="history-body">
-          ${h.fillPrice.toFixed(2)} × ${h.qty} = $${(h.fillPrice * h.qty).toFixed(2)}
-          ${h.side === 'BUY' ? `<div style="font-size:11px; color:var(--text-faint); margin-top:4px;">목표 $${h.sellTarget} · 티어 ${h.tier}</div>` : ''}
+          ${bodyHtml}
         </div>
       </div>
     `;
