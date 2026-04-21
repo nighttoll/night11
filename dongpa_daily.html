@@ -349,6 +349,77 @@
     font-size: 11px;
   }
   
+  /* RSI panel */
+  .rsi-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .rsi-field { }
+  .rsi-label {
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .rsi-field input {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    font-weight: 600;
+    text-align: right;
+  }
+  .rsi-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .rsi-actions {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 6px;
+  }
+  .rsi-actions .fetch-btn {
+    padding: 9px 12px;
+    font-size: 12px;
+  }
+  
+  /* Auto mode hint (in status panel) */
+  .auto-mode-hint {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px dashed var(--border);
+    border-radius: 7px;
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .auto-mode-hint.match { border-color: var(--green-dark); color: var(--green); }
+  .auto-mode-hint.diff { border-color: var(--yellow); color: var(--yellow); }
+  .hint-icon { font-size: 14px; }
+  .auto-mode-apply {
+    margin-left: auto;
+    padding: 4px 10px;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .auto-mode-apply:hover { background: #e0b583; }
+  
   .order-main {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -559,6 +630,33 @@
           <div class="status-sub" id="statDDSub">전고점</div>
         </div>
       </div>
+      <div class="auto-mode-hint" id="autoModeHint">
+        <span class="hint-icon">🤖</span>
+        <span id="autoModeText">RSI 미입력</span>
+        <button class="auto-mode-apply" id="applyAutoMode" style="display:none;">자동값 적용</button>
+      </div>
+    </div>
+    
+    <!-- RSI Panel (mode auto-decision) -->
+    <div class="panel">
+      <div class="panel-title">QQQ 주간 RSI <span class="hint">(모드 판정용)</span></div>
+      <div class="rsi-grid">
+        <div class="rsi-field">
+          <div class="rsi-label">2주전 (15주차)</div>
+          <input type="number" id="rsiPrev" step="0.01" placeholder="예: 45.5">
+        </div>
+        <div class="rsi-field">
+          <div class="rsi-label">1주전 (16주차)</div>
+          <input type="number" id="rsiCurr" step="0.01" placeholder="예: 48.2">
+        </div>
+      </div>
+      <div class="rsi-actions">
+        <button class="fetch-btn" id="fetchRsiBtn">🌐 야후 자동</button>
+        <button class="fetch-btn" id="resetRsiBtn">초기화</button>
+      </div>
+      <div class="fetch-hint" id="rsiHint">
+        매주 월요일 1회 입력하면 됨 · 시트의 QQQRSI 값과 동일하게
+      </div>
     </div>
     
     <!-- Yesterday close -->
@@ -621,14 +719,14 @@
   <div class="tab-content" id="tab-settings" style="display:none;">
     
     <div class="settings-section">
-      <h3>동파법 파라미터 (CDB 최적값)</h3>
+      <h3>동파법 파라미터 <span style="font-size:10px; color:var(--text-faint); font-weight:400;">(시트 기준)</span></h3>
       <div class="input-row">
         <label>SF 매수프리미엄 <span class="unit">(%)</span></label>
-        <input type="number" id="set_sfBuy" step="0.1" value="4.5">
+        <input type="number" id="set_sfBuy" step="0.1" value="3.0">
       </div>
       <div class="input-row">
         <label>SF 매도목표 <span class="unit">(%)</span></label>
-        <input type="number" id="set_sfSell" step="0.1" value="1.8">
+        <input type="number" id="set_sfSell" step="0.1" value="0.2">
       </div>
       <div class="input-row">
         <label>SF 분할수</label>
@@ -636,19 +734,19 @@
       </div>
       <div class="input-row">
         <label>SF 보유일수</label>
-        <input type="number" id="set_sfHold" step="1" value="35">
+        <input type="number" id="set_sfHold" step="1" value="30">
       </div>
       <div class="input-row">
         <label>AG 매수프리미엄 <span class="unit">(%)</span></label>
-        <input type="number" id="set_agBuy" step="0.1" value="3.6">
+        <input type="number" id="set_agBuy" step="0.1" value="5.0">
       </div>
       <div class="input-row">
         <label>AG 매도목표 <span class="unit">(%)</span></label>
-        <input type="number" id="set_agSell" step="0.1" value="6.0">
+        <input type="number" id="set_agSell" step="0.1" value="2.5">
       </div>
       <div class="input-row">
         <label>AG 분할수</label>
-        <input type="number" id="set_agSplit" step="1" value="8">
+        <input type="number" id="set_agSplit" step="1" value="7">
       </div>
       <div class="input-row">
         <label>AG 보유일수</label>
@@ -681,15 +779,24 @@
     </div>
     
     <div class="settings-section">
-      <h3>모드 판정 도움말</h3>
+      <h3>모드 판정 안내</h3>
       <div style="font-size: 12px; color: var(--text-dim); line-height: 1.7;">
-        현재 버전에서는 매일 SF/AG 모드를 <strong style="color:var(--text);">수동으로 선택</strong>합니다.
+        모드는 <strong style="color:var(--text);">QQQ 14주봉 Wilder's RSI</strong>를 기반으로 자동 판정됩니다.
         <br><br>
-        구글시트의 BOARD 또는 DB 시트에서 오늘의 모드를 확인하신 후 위 "오늘" 탭에서 선택하세요.
+        시트의 모드 결정 규칙(공식)을 그대로 구현했으며, "오늘" 탭에서 RSI 2개 (15주차/16주차)를 입력하면 자동 모드를 추천합니다.
+        <br><br>
+        🌐 <strong style="color:var(--text);">야후 자동</strong> 버튼으로 RSI 자동 받기 가능 (실패 시 시트의 QQQRSI 시트에서 수동 복사).
         <br><br>
         <span style="color:var(--text-faint);">
-        (Phase 2에서 RSI 자동 계산 기능이 추가될 예정)
+        ※ 이전 주(16주차) 모드는 "지난주의 모드"로, 모드 자동판정의 fallback 값입니다. (대부분 영향 없음)
         </span>
+      </div>
+      <div class="input-row" style="margin-top:12px;">
+        <label>지난주 모드 <span class="unit">(16주차)</span></label>
+        <select id="prevWeekModeSelect" style="width:130px; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:inherit;">
+          <option value="SF">SF</option>
+          <option value="AG">AG</option>
+        </select>
       </div>
     </div>
     
@@ -1164,7 +1271,120 @@ function renderHistory() {
 }
 
 // ============================================
-// 야후 파이낸스 가격 받기
+// 모드 자동 판정 (시트 공식 100% 일치)
+// ============================================
+// 변수 매핑:
+//   rr = L90 = 15주차 RSI (2주전, 더 과거)
+//   r  = L91 = 16주차 RSI (1주전, 더 최근)
+//   prevMode = I91 = 16주차 모드
+//   결과 = 17주차 (이번 주) 모드
+function decideMode(rr, r, prevMode) {
+  if (rr == null || r == null || isNaN(rr) || isNaN(r)) return prevMode || 'SF';
+  
+  // 규칙 1: rr ≤ 35 AND rr < r → AG (저점에서 상승, 과매도 반등)
+  if (rr <= 35 && rr < r) return 'AG';
+  // 규칙 2: 40 ≤ rr < 50 AND rr > r → SF (40-50 구간 하락)
+  if (rr >= 40 && rr < 50 && rr > r) return 'SF';
+  // 규칙 3: rr ≤ 50 AND r > 50 → AG (50선 상향 돌파)
+  if (rr <= 50 && r > 50) return 'AG';
+  // 규칙 4: rr ≥ 50 AND r < 50 → SF (50선 하향 돌파)
+  if (rr >= 50 && r < 50) return 'SF';
+  // 규칙 5: 50 ≤ rr < 60 AND rr < r → AG (50-60 상승)
+  if (rr >= 50 && rr < 60 && rr < r) return 'AG';
+  // 규칙 6: rr > 65 AND rr > r → SF (65+에서 하락)
+  if (rr > 65 && rr > r) return 'SF';
+  // 나머지: 이전 모드 유지
+  return prevMode || 'SF';
+}
+
+// Wilder's RSI (14)
+function wilderRSI(closes, period = 14) {
+  if (closes.length < period + 1) return [];
+  const rsis = [];
+  const gains = [], losses = [];
+  for (let i = 1; i < closes.length; i++) {
+    const ch = closes[i] - closes[i-1];
+    gains.push(Math.max(ch, 0));
+    losses.push(Math.max(-ch, 0));
+  }
+  let avgGain = gains.slice(0, period).reduce((a,b) => a+b, 0) / period;
+  let avgLoss = losses.slice(0, period).reduce((a,b) => a+b, 0) / period;
+  rsis.push(avgLoss === 0 ? 100 : 100 - 100/(1 + avgGain/avgLoss));
+  for (let i = period; i < gains.length; i++) {
+    avgGain = (avgGain * (period-1) + gains[i]) / period;
+    avgLoss = (avgLoss * (period-1) + losses[i]) / period;
+    rsis.push(avgLoss === 0 ? 100 : 100 - 100/(1 + avgGain/avgLoss));
+  }
+  return rsis;
+}
+
+// 야후에서 QQQ 주간 데이터 받아 RSI 계산
+async function fetchYahooQQQRSI() {
+  const proxies = [
+    (u) => 'https://corsproxy.io/?' + encodeURIComponent(u),
+    (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  ];
+  const target = 'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?interval=1wk&range=2y';
+  
+  for (const proxyFn of proxies) {
+    try {
+      const url = proxyFn(target);
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const result = data.chart.result[0];
+      const closes = result.indicators.quote[0].close.filter(c => c !== null);
+      const rsis = wilderRSI(closes, 14);
+      if (rsis.length >= 2) {
+        return {
+          rsiPrev: rsis[rsis.length - 2],   // 2주전 (15주차)
+          rsiCurr: rsis[rsis.length - 1],   // 1주전 (16주차)
+          source: 'yahoo'
+        };
+      }
+    } catch (e) { /* try next */ }
+  }
+  throw new Error('야후 호출 실패');
+}
+
+// 자동 모드 추천 → UI 갱신
+function updateAutoModeHint() {
+  const rsiPrev = parseFloat(document.getElementById('rsiPrev').value);
+  const rsiCurr = parseFloat(document.getElementById('rsiCurr').value);
+  const hintEl = document.getElementById('autoModeHint');
+  const textEl = document.getElementById('autoModeText');
+  const applyBtn = document.getElementById('applyAutoMode');
+  const currentMode = STORE.get('todayMode', 'SF');
+  const prevMode = STORE.get('prevWeekMode', 'SF');  // 16주차 모드
+  
+  if (isNaN(rsiPrev) || isNaN(rsiCurr)) {
+    hintEl.className = 'auto-mode-hint';
+    textEl.textContent = 'RSI 미입력 → 모드 자동 판정 불가';
+    applyBtn.style.display = 'none';
+    return;
+  }
+  
+  const autoMode = decideMode(rsiPrev, rsiCurr, prevMode);
+  
+  if (autoMode === currentMode) {
+    hintEl.className = 'auto-mode-hint match';
+    textEl.textContent = `자동 판정 모드: ${autoMode} ✓ 일치 (RSI ${rsiPrev.toFixed(1)}→${rsiCurr.toFixed(1)})`;
+    applyBtn.style.display = 'none';
+  } else {
+    hintEl.className = 'auto-mode-hint diff';
+    textEl.textContent = `자동 판정: ${autoMode} ≠ 현재 ${currentMode} (RSI ${rsiPrev.toFixed(1)}→${rsiCurr.toFixed(1)})`;
+    applyBtn.style.display = 'inline-block';
+  }
+  
+  // 자동 적용 버튼
+  applyBtn.onclick = () => {
+    setMode(autoMode);
+    // 16주차 → 17주차 진입 시 prevWeekMode 갱신은 사용자가 별도로 (월요일 기준)
+  };
+}
+
+// ============================================
+// 야후에서 SOXL 가격 받기 (기존 함수 유지)
 // ============================================
 async function fetchYahooPrice() {
   const btn = document.getElementById('fetchBtn');
@@ -1250,6 +1470,7 @@ function setMode(m) {
   document.getElementById('statMode').className = 'status-value mode-' + m.toLowerCase();
   document.getElementById('modeSFBtn').classList.toggle('active', m === 'SF');
   document.getElementById('modeAGBtn').classList.toggle('active', m === 'AG');
+  if (typeof updateAutoModeHint === 'function') updateAutoModeHint();
   calculateOrder();
 }
 document.getElementById('modeSFBtn').addEventListener('click', () => setMode('SF'));
@@ -1307,6 +1528,70 @@ SETTING_IDS.forEach(id => {
 
 document.getElementById('fetchBtn').addEventListener('click', fetchYahooPrice);
 
+// RSI 입력 필드 이벤트
+document.getElementById('rsiPrev').addEventListener('input', () => {
+  STORE.set('rsiPrev', document.getElementById('rsiPrev').value);
+  updateAutoModeHint();
+});
+document.getElementById('rsiCurr').addEventListener('input', () => {
+  STORE.set('rsiCurr', document.getElementById('rsiCurr').value);
+  updateAutoModeHint();
+});
+
+// 지난주 모드 select
+document.getElementById('prevWeekModeSelect').addEventListener('change', (e) => {
+  STORE.set('prevWeekMode', e.target.value);
+  updateAutoModeHint();
+});
+
+// 야후 RSI 자동 받기
+document.getElementById('fetchRsiBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('fetchRsiBtn');
+  const hint = document.getElementById('rsiHint');
+  btn.disabled = true;
+  btn.textContent = '⏳ 조회 중...';
+  hint.textContent = 'QQQ 주간 데이터 다운로드 중...';
+  
+  try {
+    const res = await fetchYahooQQQRSI();
+    document.getElementById('rsiPrev').value = res.rsiPrev.toFixed(2);
+    document.getElementById('rsiCurr').value = res.rsiCurr.toFixed(2);
+    STORE.set('rsiPrev', res.rsiPrev.toFixed(2));
+    STORE.set('rsiCurr', res.rsiCurr.toFixed(2));
+    
+    btn.classList.add('success');
+    btn.textContent = '✓ 완료';
+    hint.textContent = `야후에서 자동 계산 (15주차: ${res.rsiPrev.toFixed(2)}, 16주차: ${res.rsiCurr.toFixed(2)})`;
+    updateAutoModeHint();
+    
+    setTimeout(() => {
+      btn.classList.remove('success');
+      btn.textContent = '🌐 야후 자동';
+      btn.disabled = false;
+    }, 2000);
+  } catch (e) {
+    btn.classList.add('fail');
+    btn.textContent = '✗ 실패';
+    hint.textContent = `자동 실패. 시트의 QQQRSI 시트에서 값을 보고 수동으로 입력해주세요.`;
+    setTimeout(() => {
+      btn.classList.remove('fail');
+      btn.textContent = '🌐 야후 자동';
+      btn.disabled = false;
+    }, 3000);
+  }
+});
+
+// RSI 초기화
+document.getElementById('resetRsiBtn').addEventListener('click', () => {
+  if (confirm('RSI 값을 초기화할까요?')) {
+    document.getElementById('rsiPrev').value = '';
+    document.getElementById('rsiCurr').value = '';
+    STORE.remove('rsiPrev');
+    STORE.remove('rsiCurr');
+    updateAutoModeHint();
+  }
+});
+
 // 기록/초기화
 document.getElementById('clearHistory').addEventListener('click', () => {
   if (confirm('매매 기록을 전부 삭제할까요? (되돌릴 수 없습니다)')) {
@@ -1348,8 +1633,19 @@ document.getElementById('resetAll').addEventListener('click', () => {
   
   loadSettings();
   loadFormState();
+  
+  // RSI 값 복원
+  const savedRsiPrev = STORE.get('rsiPrev', '');
+  const savedRsiCurr = STORE.get('rsiCurr', '');
+  if (savedRsiPrev) document.getElementById('rsiPrev').value = savedRsiPrev;
+  if (savedRsiCurr) document.getElementById('rsiCurr').value = savedRsiCurr;
+  
+  // 지난주 모드 복원
+  document.getElementById('prevWeekModeSelect').value = STORE.get('prevWeekMode', 'SF');
+  
   calculateOrder();
   renderHistory();
+  updateAutoModeHint();
 })();
 </script>
 
