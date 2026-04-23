@@ -409,6 +409,53 @@
   
   .pnl-positive { color: var(--green); }
   .pnl-negative { color: var(--red); }
+  /* Today sell summary items */
+  .today-sell-item {
+    background: var(--bg); border: 1px solid var(--border-lite);
+    border-radius: 7px; padding: 10px 12px; margin-bottom: 6px;
+  }
+  .today-sell-item.urgent { border-color: var(--red); background: rgba(196,113,113,0.05); }
+  .today-sell-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .today-sell-sub {
+    font-size: 11px; color: var(--text-faint);
+    font-family: 'JetBrains Mono', monospace; margin-top: 4px;
+  }
+  .today-sell-copy {
+    background: var(--surface-3); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 8px; border-radius: 4px;
+    font-family: inherit; font-size: 11px; cursor: pointer;
+  }
+  .today-sell-copy:hover { background: var(--border); }
+  .today-sell-copy.copied { background: var(--green-dark); color: var(--green); }
+  
+  /* Auto process button - big, prominent */
+  .auto-process-card {
+    background: linear-gradient(135deg, rgba(122, 154, 184, 0.1), rgba(122, 154, 184, 0.03));
+    border: 1px solid #3a4a5a;
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+  }
+  .auto-process-btn {
+    width: 100%; padding: 12px;
+    background: var(--blue); color: var(--bg);
+    border: none; border-radius: 7px;
+    font-family: inherit; font-size: 14px; font-weight: 700;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .auto-process-btn:hover { background: #8fadc7; }
+  .auto-process-btn:disabled { opacity: 0.6; cursor: wait; }
+  .auto-process-btn.success { background: var(--green); }
+  .auto-process-btn.fail { background: var(--red); }
+  .auto-process-hint {
+    text-align: center; font-size: 11px; color: var(--text-dim); margin-top: 8px;
+  }
+  
+  /* Pending order */
+  .pending-order-badge {
+    display: inline-block; background: var(--yellow); color: var(--bg);
+    font-size: 10px; padding: 2px 7px; border-radius: 3px; font-weight: 700;
+  }
 </style>
 </head>
 <body>
@@ -510,6 +557,20 @@
     
     <div id="orderResult">
       <div class="order-card empty">위 정보를 입력하면<br>오늘의 매수 주문이 표시됩니다</div>
+    </div>
+    
+    <!-- 오늘 매도 주문 요약 -->
+    <div id="todaySellsSummary"></div>
+    
+    <!-- 자동 체결 판정 -->
+    <div class="auto-process-card">
+      <div class="panel-title" style="margin-bottom:10px; border:none; padding:0;">
+        🌐 자동 체결 판정 <span class="hint">(장 마감 후 실행)</span>
+      </div>
+      <button class="auto-process-btn" id="autoProcessBtn">오늘 종가 자동 받기 + 청산 처리</button>
+      <div class="auto-process-hint" id="autoProcessHint">
+        야후에서 오늘 SOXL 종가 → 매수 체결 + 매도 청산 모두 자동 판정
+      </div>
     </div>
     
     <div class="footer-note">
@@ -851,6 +912,243 @@ function updateAutoModeHint() {
     applyBtn.style.display = 'inline-block';
   }
   applyBtn.onclick = () => setMode(autoMode);
+}
+
+// ====================================================
+// 자동 체결 판정 (핵심 기능)
+// ====================================================
+async function autoProcessDay() {
+  const btn = document.getElementById('autoProcessBtn');
+  const hint = document.getElementById('autoProcessHint');
+  btn.disabled = true;
+  btn.textContent = '⏳ 조회 중...';
+  hint.textContent = '야후파이낸스에서 SOXL 종가 조회 중...';
+  
+  let closePrice = null;
+  let priceSource = '';
+  
+  // 1. 야후에서 오늘 종가 받기
+  try {
+    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=5d';
+    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const result = data.chart.result[0];
+    const closes = result.indicators.quote[0].close;
+    const timestamps = result.timestamp;
+    for (let i = closes.length - 1; i >= 0; i--) {
+      if (closes[i] !== null) {
+        closePrice = closes[i];
+        priceSource = fmtDate(new Date(timestamps[i] * 1000));
+        break;
+      }
+    }
+  } catch (e) {
+    // 실패 시 수동 입력
+    const manual = prompt(
+      `🌐 야후 자동 실패\n\n수동으로 오늘 SOXL 종가를 입력하세요:\n(취소 시 중단)`,
+      ''
+    );
+    if (manual === null || manual === '') {
+      btn.classList.add('fail');
+      btn.textContent = '✗ 실패';
+      hint.textContent = '사용자가 중단';
+      setTimeout(() => { btn.classList.remove('fail'); btn.textContent = '오늘 종가 자동 받기 + 청산 처리'; btn.disabled = false; }, 2000);
+      return;
+    }
+    closePrice = parseFloat(manual);
+    priceSource = '수동 입력';
+  }
+  
+  if (!closePrice || isNaN(closePrice) || closePrice <= 0) {
+    alert('유효한 종가를 받지 못함');
+    btn.classList.remove('fail');
+    btn.textContent = '오늘 종가 자동 받기 + 청산 처리';
+    btn.disabled = false;
+    return;
+  }
+  
+  btn.textContent = '⏳ 처리 중...';
+  hint.textContent = `종가 $${closePrice.toFixed(2)} 받음. 체결 판정 진행 중...`;
+  
+  // 2. 매수 체결 처리 (PENDING buys)
+  const results = { buyFilled: [], buySkipped: [], sellTarget: [], sellExpired: [] };
+  const today = fmtDate(new Date());
+  
+  const pending = STORE.get('pendingBuys', []);
+  const remainingPending = [];
+  
+  for (const pb of pending) {
+    if (pb.orderDate !== today) {
+      // 오늘 등록된 것만 처리 (다른 날 것은 놔둠)
+      remainingPending.push(pb);
+      continue;
+    }
+    
+    // 체결 판정
+    const filled = pb.bidPrice >= closePrice;
+    
+    if (filled) {
+      // 포지션 등록
+      const sfSell = parseFloat(document.getElementById('set_sfSell').value) / 100;
+      const agSell = parseFloat(document.getElementById('set_agSell').value) / 100;
+      const sfHold = parseInt(document.getElementById('set_sfHold').value);
+      const agHold = parseInt(document.getElementById('set_agHold').value);
+      
+      const sellTarget = pb.mode === 'SF'
+        ? Math.round(closePrice * (1 + sfSell) * 100) / 100
+        : Math.round(closePrice * (1 + agSell) * 100) / 100;
+      const holdDays = pb.mode === 'SF' ? sfHold : agHold;
+      const expireDate = fmtDate(addTradingDays(new Date(), holdDays));
+      
+      const newPos = addPosition({
+        buyDate: today,
+        mode: pb.mode,
+        buyPrice: closePrice,
+        qty: pb.qty,
+        sellTarget,
+        holdDays,
+        expireDate,
+        boosted: pb.boosted,
+        tier: pb.tier,
+        orderPrice: pb.bidPrice,
+        sellRegistered: false,
+      });
+      
+      addHistory({
+        id: 'H' + Date.now() + '_' + newPos.id,
+        date: today,
+        type: 'BUY', mode: pb.mode,
+        orderPrice: pb.bidPrice, fillPrice: closePrice,
+        qty: pb.qty, tier: pb.tier,
+        boosted: pb.boosted,
+        sellTarget, expireDate,
+        posId: newPos.id,
+      });
+      
+      const cashInput = document.getElementById('cash');
+      cashInput.value = Math.max(0, parseFloat(cashInput.value) - closePrice * pb.qty).toFixed(0);
+      
+      if (pb.boosted) STORE.set('boosterOn', true);
+      
+      results.buyFilled.push({ mode: pb.mode, qty: pb.qty, bid: pb.bidPrice, fill: closePrice, sellTarget, expireDate });
+    } else {
+      // 미체결 기록
+      addHistory({
+        id: 'H' + Date.now() + '_skip',
+        date: today,
+        type: 'BUY_SKIP', mode: pb.mode,
+        orderPrice: pb.bidPrice, closePrice,
+        qty: pb.qty, tier: pb.tier,
+        boosted: pb.boosted,
+      });
+      results.buySkipped.push({ mode: pb.mode, qty: pb.qty, bid: pb.bidPrice, close: closePrice });
+    }
+  }
+  STORE.set('pendingBuys', remainingPending);
+  
+  // 3. 매도 청산 처리 (기존 processSells 로직과 동일)
+  const positions = getPositions();
+  for (const p of positions) {
+    if (p.status !== 'open') continue;
+    if (p.buyDate === today) continue;  // 오늘 매수분 제외
+    if (!p.sellRegistered) continue;    // 예약매도 안 걸린 것 제외
+    
+    let event = null;
+    if (today < p.expireDate && closePrice >= p.sellTarget) {
+      event = { type: 'TARGET', exitPrice: closePrice };
+    } else if (today >= p.expireDate) {
+      event = { type: 'EXPIRE', exitPrice: closePrice };
+    }
+    
+    if (event) {
+      const pnl = (event.exitPrice - p.buyPrice) * p.qty;
+      p.status = 'closed';
+      p.exitDate = today;
+      p.exitPrice = event.exitPrice;
+      p.exitType = event.type;
+      p.realizedPnl = Math.round(pnl * 100) / 100;
+      
+      addHistory({
+        id: 'H' + Date.now() + '_sell_' + p.id,
+        date: today,
+        type: event.type === 'TARGET' ? 'SELL_TARGET' : 'SELL_EXPIRE',
+        mode: p.mode,
+        buyPrice: p.buyPrice, exitPrice: event.exitPrice,
+        qty: p.qty, posId: p.id,
+        sellTarget: p.sellTarget, buyDate: p.buyDate,
+        boosted: p.boosted, realizedPnl: p.realizedPnl,
+      });
+      
+      const cashInput = document.getElementById('cash');
+      cashInput.value = (parseFloat(cashInput.value) + event.exitPrice * p.qty).toFixed(0);
+      
+      if (event.type === 'TARGET') results.sellTarget.push({ mode: p.mode, qty: p.qty, buyPrice: p.buyPrice, exitPrice: event.exitPrice, pnl: p.realizedPnl });
+      else results.sellExpired.push({ mode: p.mode, qty: p.qty, buyPrice: p.buyPrice, exitPrice: event.exitPrice, pnl: p.realizedPnl });
+    }
+  }
+  setPositions(positions);
+  saveFormState();
+  
+  // 4. 전일 종가도 업데이트 (오늘 종가 = 내일의 전일종가)
+  document.getElementById('prevClose').value = closePrice.toFixed(2);
+  saveFormState();
+  
+  // 5. 결과 요약
+  const total = results.buyFilled.length + results.buySkipped.length + results.sellTarget.length + results.sellExpired.length;
+  const totalPnl = [...results.sellTarget, ...results.sellExpired].reduce((s, x) => s + x.pnl, 0);
+  
+  let msg = `✓ 자동 처리 완료\n\nSOXL 종가: $${closePrice.toFixed(2)} (${priceSource})\n\n`;
+  
+  if (total === 0) {
+    msg += '처리할 내역 없음';
+  } else {
+    if (results.buyFilled.length > 0) {
+      msg += `🟢 매수 체결 ${results.buyFilled.length}건:\n`;
+      results.buyFilled.forEach(x => {
+        msg += `  ${x.mode} ${x.qty}주 @ $${x.fill.toFixed(2)} → 목표 $${x.sellTarget}\n`;
+      });
+      msg += '\n';
+    }
+    if (results.buySkipped.length > 0) {
+      msg += `⚪ 매수 미체결 ${results.buySkipped.length}건:\n`;
+      results.buySkipped.forEach(x => {
+        msg += `  ${x.mode} 지정가 $${x.bid} > 종가 $${x.close}\n`;
+      });
+      msg += '\n';
+    }
+    if (results.sellTarget.length > 0) {
+      msg += `🎯 목표 체결 ${results.sellTarget.length}건:\n`;
+      results.sellTarget.forEach(x => {
+        msg += `  ${x.mode} ${x.qty}주 $${x.buyPrice}→$${x.exitPrice} = ${x.pnl >= 0 ? '+' : ''}$${x.pnl.toFixed(2)}\n`;
+      });
+      msg += '\n';
+    }
+    if (results.sellExpired.length > 0) {
+      msg += `⏰ 만료 MOC ${results.sellExpired.length}건:\n`;
+      results.sellExpired.forEach(x => {
+        msg += `  ${x.mode} ${x.qty}주 $${x.buyPrice}→$${x.exitPrice} = ${x.pnl >= 0 ? '+' : ''}$${x.pnl.toFixed(2)}\n`;
+      });
+      msg += '\n';
+    }
+    if (results.sellTarget.length + results.sellExpired.length > 0) {
+      msg += `\n총 실현손익: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
+    }
+  }
+  
+  btn.classList.add('success');
+  btn.textContent = `✓ 완료 (${total}건)`;
+  hint.textContent = `${priceSource} 종가 $${closePrice.toFixed(2)} 처리 완료`;
+  
+  setTimeout(() => {
+    btn.classList.remove('success');
+    btn.textContent = '오늘 종가 자동 받기 + 청산 처리';
+    btn.disabled = false;
+  }, 3000);
+  
+  alert(msg);
+  renderAll();
 }
 
 // ====================================================
@@ -1203,9 +1501,10 @@ function renderOrder(o) {
         </div>
       </div>
       ${warningHtml}
-      <div class="order-actions">
-        <button class="action-btn" id="copyBtn">📋 LOC 주문 복사</button>
-        <button class="action-btn primary" id="fillBtn">✅ 체결기록</button>
+      <div class="order-actions" style="grid-template-columns: 1fr 1fr 1fr;">
+        <button class="action-btn" id="copyBtn">📋 복사</button>
+        <button class="action-btn primary" id="registerBtn">📤 주문 등록</button>
+        <button class="action-btn" id="fillBtn">✅ 수동 기록</button>
       </div>
     </div>
   `;
@@ -1215,10 +1514,208 @@ function renderOrder(o) {
     navigator.clipboard.writeText(orderCmd).then(() => {
       this.textContent = '✓ 복사됨';
       this.classList.add('copied');
-      setTimeout(() => { this.textContent = '📋 LOC 주문 복사'; this.classList.remove('copied'); }, 1500);
+      setTimeout(() => { this.textContent = '📋 복사'; this.classList.remove('copied'); }, 1500);
     });
   };
+  document.getElementById('registerBtn').onclick = () => registerPendingBuy(o);
   document.getElementById('fillBtn').onclick = () => recordBuyFill(o);
+}
+
+// 주문 등록 (PENDING 상태로 저장) - 자동 체결판정 대상
+function registerPendingBuy(o) {
+  const pending = STORE.get('pendingBuys', []);
+  // 같은 날 중복 방지
+  const today = fmtDate(new Date());
+  const already = pending.find(p => p.orderDate === today);
+  if (already) {
+    if (!confirm('오늘 이미 등록된 주문이 있습니다. 덮어쓸까요?')) return;
+    // 기존 제거
+    const filtered = pending.filter(p => p.orderDate !== today);
+    STORE.set('pendingBuys', filtered);
+  }
+  
+  const pend = {
+    id: 'PEND' + Date.now(),
+    orderDate: today,
+    mode: o.mode,
+    bidPrice: o.bidPrice,
+    qty: o.estQty,
+    seed: o.actualSeed,
+    tier: o.tierForSeed,
+    boosted: o.boosterOn === true,
+  };
+  const list = STORE.get('pendingBuys', []);
+  list.push(pend);
+  STORE.set('pendingBuys', list);
+  
+  alert(
+    `📤 주문 등록됨\n\n` +
+    `LOC ${o.estQty}주 @ $${o.bidPrice}\n\n` +
+    `증권사에 LOC 주문 넣으신 후,\n장 마감 후 "자동 체결 판정" 버튼 클릭하세요`
+  );
+  renderAll();
+}
+
+// ====================================================
+// 오늘 탭: 매도 요약 + 대기 주문 렌더
+// ====================================================
+function renderTodaySellsSummary() {
+  const container = document.getElementById('todaySellsSummary');
+  if (!container) return;
+  
+  let html = '';
+  
+  const today = fmtDate(new Date());
+  const prevClose = parseFloat(document.getElementById('prevClose').value) || 0;
+  const positions = getActivePositions();
+  const pendingBuys = STORE.get('pendingBuys', []);
+  
+  // [섹션 A] 대기 중인 매수 주문 (오늘 야후자동으로 처리될 것)
+  if (pendingBuys.length > 0) {
+    const items = pendingBuys.map(pb => `
+      <div class="today-sell-item">
+        <div class="today-sell-row">
+          <span class="mode-badge ${pb.mode}">${pb.mode}</span>
+          <span class="pending-order-badge">대기</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:13px; flex:1;">
+            ${pb.qty}주 @ <strong>$${pb.bidPrice.toFixed(2)}</strong>
+          </span>
+          <button class="today-sell-copy" data-pend-id="${pb.id}">🗑 취소</button>
+        </div>
+        <div class="today-sell-sub">주문일 ${pb.orderDate} · 시드 $${pb.seed.toLocaleString()}${pb.boosted ? ' · 🚀 부스트' : ''}</div>
+      </div>
+    `).join('');
+    html += `
+      <div class="order-card no-order">
+        <div class="order-header">
+          <div class="order-title" style="color:var(--yellow);">⏳ 체결 대기 중 <span class="tag" style="background:var(--yellow);">${pendingBuys.length}</span></div>
+          <div style="font-size:11px; color:var(--text-dim);">"자동 체결 판정"으로 처리</div>
+        </div>
+        ${items}
+      </div>
+    `;
+  }
+  
+  if (positions.length === 0) {
+    container.innerHTML = html;
+    return;
+  }
+  
+  const needReg = positions.filter(p => !p.sellRegistered);
+  const active = positions.filter(p => p.sellRegistered);
+  
+  // 목표 임박 (1.5% 이내) / 오늘 MOC
+  const nearTarget = active.filter(p => {
+    const pct = prevClose > 0 ? (p.sellTarget - prevClose) / prevClose * 100 : 999;
+    return pct <= 1.5;
+  });
+  const expiringToday = active.filter(p => daysBetween(today, p.expireDate) <= 0);
+  
+  // [섹션 B] 오늘 등록할 예약매도
+  if (needReg.length > 0) {
+    const items = needReg.map(p => `
+      <div class="today-sell-item">
+        <div class="today-sell-row">
+          <span class="mode-badge ${p.mode}">${p.mode}</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:13px; flex:1;">
+            ${p.qty}주 @ <strong style="color:var(--red);">$${p.sellTarget.toFixed(2)}</strong>
+          </span>
+          <button class="today-sell-copy" data-pos-id="${p.id}">📋</button>
+        </div>
+        <div class="today-sell-sub">매수 $${p.buyPrice.toFixed(2)} (${p.buyDate}) · 만료 ${p.expireDate}</div>
+      </div>
+    `).join('');
+    html += `
+      <div class="order-card" style="border-color: var(--red-dark); background: linear-gradient(135deg, rgba(196,113,113,0.06), rgba(196,113,113,0.01));">
+        <div class="order-header">
+          <div class="order-title sell">📤 등록할 예약매도 <span class="tag" style="background:var(--red);">${needReg.length}</span></div>
+          <div style="font-size:11px; color:var(--text-dim);">매수 다음날 등록</div>
+        </div>
+        ${items}
+        <div class="fill-hint" style="margin-top:8px; font-size:11px; color:var(--text-faint);">
+          증권사 등록 후 "매도" 탭에서 ✅ 등록 완료
+        </div>
+      </div>
+    `;
+  }
+  
+  // [섹션 C] 주목할 활성 매도 (목표 임박 or 오늘 MOC)
+  const displayList = [...new Set([...expiringToday, ...nearTarget])];
+  if (displayList.length > 0) {
+    const items = displayList.map(p => {
+      const days = daysBetween(today, p.expireDate);
+      const pct = prevClose > 0 ? (p.sellTarget - prevClose) / prevClose * 100 : 0;
+      const urgent = days <= 0;
+      return `
+        <div class="today-sell-item ${urgent ? 'urgent' : ''}">
+          <div class="today-sell-row">
+            <span class="mode-badge ${p.mode}">${p.mode}</span>
+            <span style="font-family:'JetBrains Mono',monospace; font-size:13px; flex:1;">
+              ${p.qty}주 @ <strong style="color:var(--green);">$${p.sellTarget.toFixed(2)}</strong>
+              <span style="color:${pct >= 0 ? 'var(--green)' : 'var(--red)'}; font-size:11px;">(${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)</span>
+            </span>
+            <span style="font-size:11px; color:${urgent ? 'var(--red)' : 'var(--yellow)'}; font-weight:600;">
+              ${urgent ? '오늘 MOC' : days + '일'}
+            </span>
+          </div>
+          <div class="today-sell-sub">매수 $${p.buyPrice.toFixed(2)} (${p.buyDate})</div>
+        </div>
+      `;
+    }).join('');
+    html += `
+      <div class="order-card no-order">
+        <div class="order-header">
+          <div class="order-title" style="color:var(--yellow);">⚠️ 주목 매도 <span class="tag" style="background:var(--yellow);">${displayList.length}</span></div>
+          <div style="font-size:11px; color:var(--text-dim);">목표 임박 or 만료</div>
+        </div>
+        ${items}
+      </div>
+    `;
+  }
+  
+  // [섹션 D] 전체 활성 예약매도 요약
+  if (active.length > 0) {
+    html += `
+      <div class="order-card no-order" style="padding: 11px 14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:13px;">
+          <div style="color:var(--text-dim);">
+            📅 활성 예약매도 <strong style="color:var(--text);">${active.length}건</strong>${nearTarget.length > 0 ? ` · <span style="color:var(--yellow);">목표임박 ${nearTarget.length}</span>` : ''}${expiringToday.length > 0 ? ` · <span style="color:var(--red);">MOC ${expiringToday.length}</span>` : ''}
+          </div>
+          <button class="fetch-btn" id="goToSellsBtn" style="padding:5px 10px; font-size:11px;">매도탭 →</button>
+        </div>
+      </div>
+    `;
+  }
+  
+  container.innerHTML = html;
+  
+  // 이벤트 핸들러
+  container.querySelectorAll('.today-sell-copy[data-pos-id]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.posId;
+      const p = getPositions().find(x => x.id === id);
+      if (!p) return;
+      const text = `SOXL LOC 매도 ${p.qty}주 @ $${p.sellTarget.toFixed(2)} (만료 ${p.expireDate}, MOC 손절)`;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '📋'; btn.classList.remove('copied'); }, 1500);
+      });
+    };
+  });
+  container.querySelectorAll('.today-sell-copy[data-pend-id]').forEach(btn => {
+    btn.onclick = () => {
+      const id = btn.dataset.pendId;
+      if (!confirm('이 대기 주문을 취소할까요?')) return;
+      const list = STORE.get('pendingBuys', []).filter(p => p.id !== id);
+      STORE.set('pendingBuys', list);
+      renderAll();
+    };
+  });
+  const goBtn = document.getElementById('goToSellsBtn');
+  if (goBtn) {
+    goBtn.onclick = () => document.querySelector('.tab-btn[data-tab="sells"]').click();
+  }
 }
 
 // ====================================================
@@ -1499,6 +1996,45 @@ function renderHistory() {
 // 모달 (포지션 추가/편집)
 // ====================================================
 let editingPosId = null;
+
+// 모드/매수일/매수가 변경시 매도목표, 손절기한 자동 계산
+function modalAutoCalc() {
+  const buyDateStr = document.getElementById('m_buyDate').value;
+  const mode = document.getElementById('m_mode').value;
+  const buyPrice = parseFloat(document.getElementById('m_buyPrice').value);
+  
+  if (!buyDateStr || !mode) return;
+  
+  const sfSell = parseFloat(document.getElementById('set_sfSell').value) / 100;
+  const agSell = parseFloat(document.getElementById('set_agSell').value) / 100;
+  const sfHold = parseInt(document.getElementById('set_sfHold').value);
+  const agHold = parseInt(document.getElementById('set_agHold').value);
+  
+  // 매도목표 자동 (매수가 있을 때)
+  if (!isNaN(buyPrice) && buyPrice > 0) {
+    const sellTarget = mode === 'SF'
+      ? Math.round(buyPrice * (1 + sfSell) * 100) / 100
+      : Math.round(buyPrice * (1 + agSell) * 100) / 100;
+    const sellTargetEl = document.getElementById('m_sellTarget');
+    if (document.activeElement !== sellTargetEl) {
+      sellTargetEl.value = sellTarget.toFixed(2);
+    }
+  }
+  
+  // 손절기한 자동 (매수일 + 보유일수)
+  const holdDays = mode === 'SF' ? sfHold : agHold;
+  try {
+    const buyDate = parseDate(buyDateStr);
+    if (!isNaN(buyDate.getTime())) {
+      const expireDate = fmtDate(addTradingDays(buyDate, holdDays));
+      const expireEl = document.getElementById('m_expireDate');
+      if (document.activeElement !== expireEl) {
+        expireEl.value = expireDate;
+      }
+    }
+  } catch (e) {}
+}
+
 function showPosModal(pos = null) {
   editingPosId = pos ? pos.id : null;
   document.getElementById('posModalTitle').textContent = pos ? '포지션 편집' : '보유 포지션 추가';
@@ -1511,6 +2047,8 @@ function showPosModal(pos = null) {
   document.getElementById('m_sellTarget').value = pos ? pos.sellTarget : '';
   document.getElementById('m_expireDate').value = pos ? pos.expireDate : '';
   document.getElementById('m_boosted').value = pos ? String(pos.boosted) : 'false';
+  
+  if (!pos) modalAutoCalc();  // 신규 추가 시 자동 계산
   
   document.getElementById('posModal').classList.add('show');
 }
@@ -1551,6 +2089,14 @@ document.getElementById('m_save').addEventListener('click', () => {
 
 // 매도 탭 처리
 document.getElementById('processSellsBtn').addEventListener('click', processSells);
+
+// 자동 처리 버튼
+document.getElementById('autoProcessBtn').addEventListener('click', autoProcessDay);
+
+// 모달 입력 자동 계산 트리거
+document.getElementById('m_mode').addEventListener('change', modalAutoCalc);
+document.getElementById('m_buyDate').addEventListener('change', modalAutoCalc);
+document.getElementById('m_buyPrice').addEventListener('input', modalAutoCalc);
 
 // 포지션 수동 추가
 document.getElementById('addPosBtn').addEventListener('click', () => showPosModal(null));
@@ -1698,6 +2244,7 @@ document.getElementById('resetAll').addEventListener('click', () => {
 // ====================================================
 function renderAll() {
   calculateOrder();
+  renderTodaySellsSummary();
   renderPositions();
   renderSells();
   renderHistory();
