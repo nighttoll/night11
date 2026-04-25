@@ -46,10 +46,45 @@
   .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
   .app-title { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
   .app-title .accent { color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 8px; }
   .today-chip {
     background: var(--surface); border: 1px solid var(--border);
     padding: 5px 11px; border-radius: 16px;
     font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim);
+  }
+  
+  /* Account selector */
+  .account-selector { position: relative; }
+  .account-btn {
+    background: var(--surface); border: 1px solid var(--accent-dark);
+    color: var(--accent); padding: 5px 10px; border-radius: 16px;
+    font-family: inherit; font-size: 11px; font-weight: 600;
+    cursor: pointer; display: flex; align-items: center; gap: 4px;
+    max-width: 130px;
+  }
+  .account-btn:hover { background: var(--surface-2); border-color: var(--accent); }
+  .account-btn-arrow { font-size: 8px; opacity: 0.7; }
+  .account-menu {
+    position: absolute; top: 100%; right: 0; margin-top: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; min-width: 200px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    z-index: 50;
+    overflow: hidden;
+  }
+  .account-menu-item {
+    width: 100%; text-align: left; padding: 9px 12px;
+    background: transparent; border: none;
+    color: var(--text); font-family: inherit; font-size: 12px;
+    cursor: pointer; display: flex; align-items: center; gap: 8px;
+  }
+  .account-menu-item:hover { background: var(--surface-3); }
+  .account-menu-item.active { color: var(--accent); background: var(--bg); }
+  .account-menu-item.active::before { content: '✓ '; }
+  .account-menu-divider { height: 1px; background: var(--border-lite); margin: 4px 0; }
+  .account-menu-asset {
+    margin-left: auto; font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--text-faint);
   }
   
   /* Tabs */
@@ -464,7 +499,21 @@
   
   <div class="top-bar">
     <div class="app-title">동파법 <span class="accent">일일 체크</span></div>
-    <div class="today-chip" id="todayChip">—</div>
+    <div class="header-right">
+      <div class="account-selector">
+        <button class="account-btn" id="accountBtn">
+          <span id="accountBtnLabel">메인</span>
+          <span class="account-btn-arrow">▼</span>
+        </button>
+        <div class="account-menu" id="accountMenu" style="display:none;">
+          <div id="accountMenuList"></div>
+          <div class="account-menu-divider"></div>
+          <button class="account-menu-item" id="addAccountBtn">➕ 새 계좌</button>
+          <button class="account-menu-item" id="manageAccountsBtn">⚙️ 계좌 관리</button>
+        </div>
+      </div>
+      <div class="today-chip" id="todayChip">—</div>
+    </div>
   </div>
   
   <div class="tab-bar">
@@ -889,6 +938,102 @@ const STORE = {
   remove(key) { localStorage.removeItem('dongpa_' + key); }
 };
 
+// ====================================================
+// 멀티 계좌 시스템
+// ====================================================
+
+// 계좌별 데이터 키 목록 (ACC를 통해 계좌별로 분리됨)
+const ACCOUNT_KEYS = [
+  'positions', 'history', 'pendingBuys',
+  'formState', 'settings',
+  'todayMode', 'boosterOn', 'prevWeekMode',
+  'rsiPrev', 'rsiCurr',
+  'recent10Pnl', 'cumulativePnl',
+];
+
+// 계좌별 데이터 헬퍼 - 활성 계좌의 데이터에 접근
+const ACC = {
+  current() {
+    return STORE.get('currentAccountId', 'main');
+  },
+  list() {
+    return STORE.get('accounts', []);
+  },
+  get(key, defaultVal) {
+    const id = this.current();
+    return STORE.get(`acc:${id}:${key}`, defaultVal);
+  },
+  set(key, val) {
+    const id = this.current();
+    STORE.set(`acc:${id}:${key}`, val);
+  },
+  remove(key) {
+    const id = this.current();
+    STORE.remove(`acc:${id}:${key}`);
+  },
+  // 특정 계좌의 데이터 가져오기 (대시보드용)
+  getFor(accountId, key, defaultVal) {
+    return STORE.get(`acc:${accountId}:${key}`, defaultVal);
+  },
+};
+
+// 자동 마이그레이션: 글로벌 키 → 'main' 계좌로 이동
+function migrateToMultiAccount() {
+  // 이미 멀티 계좌 모드면 스킵
+  const accounts = STORE.get('accounts', null);
+  if (accounts !== null && accounts.length > 0) {
+    return false;  // 이미 마이그레이션됨
+  }
+
+  // 기존 글로벌 데이터를 main 계좌로 이동
+  let migrated = false;
+  for (const key of ACCOUNT_KEYS) {
+    const oldKey = 'dongpa_' + key;
+    const oldVal = localStorage.getItem(oldKey);
+    if (oldVal !== null) {
+      // main 계좌로 이동
+      localStorage.setItem(`dongpa_acc:main:${key}`, oldVal);
+      localStorage.removeItem(oldKey);
+      migrated = true;
+    }
+  }
+
+  // 'main' 계좌 생성 (기본 계좌 항상 있음)
+  STORE.set('accounts', [
+    { id: 'main', name: '메인 계좌', broker: '', color: '#d4a574', createdAt: new Date().toISOString() }
+  ]);
+  STORE.set('currentAccountId', 'main');
+
+  if (migrated) {
+    console.log('[migration] 기존 데이터를 메인 계좌로 이전 완료');
+  }
+  return migrated;
+}
+
+// 계좌 추가 (2단계에서 사용)
+function addAccount(name, broker = '', color = '#7a9ab8') {
+  const accounts = ACC.list();
+  // ID 생성: 'a' + 타임스탬프
+  const id = 'a' + Date.now().toString(36);
+  accounts.push({
+    id, name, broker, color,
+    createdAt: new Date().toISOString()
+  });
+  STORE.set('accounts', accounts);
+  return id;
+}
+
+// 계좌 전환
+function switchAccount(accountId) {
+  const accounts = ACC.list();
+  if (!accounts.find(a => a.id === accountId)) return false;
+  STORE.set('currentAccountId', accountId);
+  return true;
+}
+
+// 마이그레이션 즉시 실행 (스크립트 로드 시)
+migrateToMultiAccount();
+
 function estimatePeak() {
   let peak = 0;
   for (const [d, p] of DATA.prices) if (p > peak) peak = p;
@@ -960,8 +1105,8 @@ function updateAutoModeHint() {
   const hintEl = document.getElementById('autoModeHint');
   const textEl = document.getElementById('autoModeText');
   const applyBtn = document.getElementById('applyAutoMode');
-  const currentMode = STORE.get('todayMode', 'SF');
-  const prevMode = STORE.get('prevWeekMode', 'SF');
+  const currentMode = ACC.get('todayMode', 'SF');
+  const prevMode = ACC.get('prevWeekMode', 'SF');
   
   if (isNaN(rsiPrev) || isNaN(rsiCurr)) {
     hintEl.className = 'auto-mode-hint';
@@ -1045,7 +1190,7 @@ async function autoProcessDay() {
   const results = { buyFilled: [], buySkipped: [], sellTarget: [], sellExpired: [] };
   const today = fmtDate(new Date());
   
-  const pending = STORE.get('pendingBuys', []);
+  const pending = ACC.get('pendingBuys', []);
   const remainingPending = [];
   
   for (const pb of pending) {
@@ -1099,7 +1244,7 @@ async function autoProcessDay() {
       const cashInput = document.getElementById('cash');
       cashInput.value = Math.max(0, parseFloat(cashInput.value) - closePrice * pb.qty).toFixed(0);
       
-      if (pb.boosted) STORE.set('boosterOn', true);
+      if (pb.boosted) ACC.set('boosterOn', true);
       
       results.buyFilled.push({ mode: pb.mode, qty: pb.qty, bid: pb.bidPrice, fill: closePrice, sellTarget, expireDate });
     } else {
@@ -1115,7 +1260,7 @@ async function autoProcessDay() {
       results.buySkipped.push({ mode: pb.mode, qty: pb.qty, bid: pb.bidPrice, close: closePrice });
     }
   }
-  STORE.set('pendingBuys', remainingPending);
+  ACC.set('pendingBuys', remainingPending);
   
   // 3. 매도 청산 처리 (기존 processSells 로직과 동일)
   const positions = getPositions();
@@ -1223,8 +1368,8 @@ async function autoProcessDay() {
 // ====================================================
 // 포지션 관리
 // ====================================================
-function getPositions() { return STORE.get('positions', []); }
-function setPositions(arr) { STORE.set('positions', arr); }
+function getPositions() { return ACC.get('positions', []); }
+function setPositions(arr) { ACC.set('positions', arr); }
 
 function addPosition(pos) {
   const positions = getPositions();
@@ -1329,7 +1474,7 @@ function recordBuyFill(o) {
   cashInput.value = Math.max(0, parseFloat(cashInput.value) - closeNum * actualQty).toFixed(0);
   saveFormState();
   
-  if (o.boosterOn === 'candidate' || o.boosterOn === true) STORE.set('boosterOn', true);
+  if (o.boosterOn === 'candidate' || o.boosterOn === true) ACC.set('boosterOn', true);
   
   alert(
     `✓ 체결 + 포지션 등록\n\n` +
@@ -1415,11 +1560,11 @@ function processSells() {
 // ====================================================
 // 기록
 // ====================================================
-function getHistory() { return STORE.get('history', []); }
+function getHistory() { return ACC.get('history', []); }
 function addHistory(entry) {
   const h = getHistory();
   h.unshift(entry);
-  STORE.set('history', h);
+  ACC.set('history', h);
 }
 
 // ====================================================
@@ -1430,7 +1575,7 @@ function calculateOrder() {
   const ia = parseFloat(document.getElementById('ia').value);
   const cash = parseFloat(document.getElementById('cash').value);
   const peakPrice = parseFloat(document.getElementById('peakPrice').value);
-  const mode = STORE.get('todayMode', 'SF');
+  const mode = ACC.get('todayMode', 'SF');
   
   // 현재 보유 포지션 수 = 티어
   const tier = getActivePositions().length;
@@ -1455,7 +1600,7 @@ function calculateOrder() {
   const ddEntry = parseFloat(document.getElementById('set_ddEntry').value) / 100;
   const ddExit = parseFloat(document.getElementById('set_ddExit').value) / 100;
   
-  const prevBoost = STORE.get('boosterOn', false);
+  const prevBoost = ACC.get('boosterOn', false);
   let peak = peakPrice && peakPrice > 0 ? peakPrice : prevClose;
   if (prevClose > peak) peak = prevClose;
   const pdd = peak > 0 ? (peak - prevClose) / peak : 0;
@@ -1592,7 +1737,7 @@ function renderOrder(o) {
 
 // 주문 등록 (PENDING 상태로 저장) - 자동 체결판정 대상
 function registerPendingBuy(o) {
-  const pending = STORE.get('pendingBuys', []);
+  const pending = ACC.get('pendingBuys', []);
   // 같은 날 중복 방지
   const today = fmtDate(new Date());
   const already = pending.find(p => p.orderDate === today);
@@ -1600,7 +1745,7 @@ function registerPendingBuy(o) {
     if (!confirm('오늘 이미 등록된 주문이 있습니다. 덮어쓸까요?')) return;
     // 기존 제거
     const filtered = pending.filter(p => p.orderDate !== today);
-    STORE.set('pendingBuys', filtered);
+    ACC.set('pendingBuys', filtered);
   }
   
   const pend = {
@@ -1613,9 +1758,9 @@ function registerPendingBuy(o) {
     tier: o.tierForSeed,
     boosted: o.boosterOn === true,
   };
-  const list = STORE.get('pendingBuys', []);
+  const list = ACC.get('pendingBuys', []);
   list.push(pend);
-  STORE.set('pendingBuys', list);
+  ACC.set('pendingBuys', list);
   
   alert(
     `📤 주문 등록됨\n\n` +
@@ -1637,7 +1782,7 @@ function renderTodaySellsSummary() {
   const today = fmtDate(new Date());
   const prevClose = parseFloat(document.getElementById('prevClose').value) || 0;
   const positions = getActivePositions();
-  const pendingBuys = STORE.get('pendingBuys', []);
+  const pendingBuys = ACC.get('pendingBuys', []);
   
   // [섹션 A] 대기 중인 매수 주문 (오늘 야후자동으로 처리될 것)
   if (pendingBuys.length > 0) {
@@ -1776,8 +1921,8 @@ function renderTodaySellsSummary() {
     btn.onclick = () => {
       const id = btn.dataset.pendId;
       if (!confirm('이 대기 주문을 취소할까요?')) return;
-      const list = STORE.get('pendingBuys', []).filter(p => p.id !== id);
-      STORE.set('pendingBuys', list);
+      const list = ACC.get('pendingBuys', []).filter(p => p.id !== id);
+      ACC.set('pendingBuys', list);
       renderAll();
     };
   });
@@ -2110,7 +2255,7 @@ function showPosModal(pos = null) {
   
   const today = fmtDate(new Date());
   document.getElementById('m_buyDate').value = pos ? pos.buyDate : today;
-  document.getElementById('m_mode').value = pos ? pos.mode : STORE.get('todayMode', 'SF');
+  document.getElementById('m_mode').value = pos ? pos.mode : ACC.get('todayMode', 'SF');
   document.getElementById('m_buyPrice').value = pos ? pos.buyPrice : '';
   document.getElementById('m_qty').value = pos ? pos.qty : '';
   document.getElementById('m_sellTarget').value = pos ? pos.sellTarget : '';
@@ -2174,7 +2319,7 @@ document.getElementById('addPosBtn').addEventListener('click', () => showPosModa
 // 모드 토글, 야후 가격 등
 // ====================================================
 function setMode(m) {
-  STORE.set('todayMode', m);
+  ACC.set('todayMode', m);
   document.getElementById('statMode').textContent = m;
   document.getElementById('statMode').className = 'status-value mode-' + m.toLowerCase();
   document.getElementById('modeSFBtn').classList.toggle('active', m === 'SF');
@@ -2244,19 +2389,19 @@ const SETTING_IDS = ['set_sfBuy', 'set_sfSell', 'set_sfSplit', 'set_sfHold',
 function saveFormState() {
   const state = {};
   FORM_IDS.forEach(id => { state[id] = document.getElementById(id).value; });
-  STORE.set('formState', state);
+  ACC.set('formState', state);
 }
 function loadFormState() {
-  const state = STORE.get('formState', {});
+  const state = ACC.get('formState', {});
   FORM_IDS.forEach(id => { if (state[id] !== undefined && state[id] !== '') document.getElementById(id).value = state[id]; });
 }
 function saveSettings() {
   const state = {};
   SETTING_IDS.forEach(id => { state[id] = document.getElementById(id).value; });
-  STORE.set('settings', state);
+  ACC.set('settings', state);
 }
 function loadSettings() {
-  const state = STORE.get('settings', {});
+  const state = ACC.get('settings', {});
   SETTING_IDS.forEach(id => { if (state[id] !== undefined && state[id] !== '') document.getElementById(id).value = state[id]; });
 }
 
@@ -2268,9 +2413,9 @@ SETTING_IDS.forEach(id => {
 });
 
 document.getElementById('fetchBtn').addEventListener('click', fetchYahooPrice);
-document.getElementById('rsiPrev').addEventListener('input', () => { STORE.set('rsiPrev', document.getElementById('rsiPrev').value); updateAutoModeHint(); });
-document.getElementById('rsiCurr').addEventListener('input', () => { STORE.set('rsiCurr', document.getElementById('rsiCurr').value); updateAutoModeHint(); });
-document.getElementById('prevWeekModeSelect').addEventListener('change', (e) => { STORE.set('prevWeekMode', e.target.value); updateAutoModeHint(); });
+document.getElementById('rsiPrev').addEventListener('input', () => { ACC.set('rsiPrev', document.getElementById('rsiPrev').value); updateAutoModeHint(); });
+document.getElementById('rsiCurr').addEventListener('input', () => { ACC.set('rsiCurr', document.getElementById('rsiCurr').value); updateAutoModeHint(); });
+document.getElementById('prevWeekModeSelect').addEventListener('change', (e) => { ACC.set('prevWeekMode', e.target.value); updateAutoModeHint(); });
 
 document.getElementById('fetchRsiBtn').addEventListener('click', async () => {
   const btn = document.getElementById('fetchRsiBtn');
@@ -2281,8 +2426,8 @@ document.getElementById('fetchRsiBtn').addEventListener('click', async () => {
     const res = await fetchYahooQQQRSI();
     document.getElementById('rsiPrev').value = res.rsiPrev.toFixed(2);
     document.getElementById('rsiCurr').value = res.rsiCurr.toFixed(2);
-    STORE.set('rsiPrev', res.rsiPrev.toFixed(2));
-    STORE.set('rsiCurr', res.rsiCurr.toFixed(2));
+    ACC.set('rsiPrev', res.rsiPrev.toFixed(2));
+    ACC.set('rsiCurr', res.rsiCurr.toFixed(2));
     btn.classList.add('success'); btn.textContent = '✓';
     hint.textContent = `자동 (15주차: ${res.rsiPrev.toFixed(2)}, 16주차: ${res.rsiCurr.toFixed(2)})`;
     updateAutoModeHint();
@@ -2298,12 +2443,12 @@ document.getElementById('resetRsiBtn').addEventListener('click', () => {
   if (!confirm('RSI 값을 초기화할까요?')) return;
   document.getElementById('rsiPrev').value = '';
   document.getElementById('rsiCurr').value = '';
-  STORE.remove('rsiPrev'); STORE.remove('rsiCurr');
+  ACC.remove('rsiPrev'); ACC.remove('rsiCurr');
   updateAutoModeHint();
 });
 
 document.getElementById('clearHistory').addEventListener('click', () => {
-  if (confirm('매매 기록을 전부 삭제할까요?')) { STORE.remove('history'); renderHistory(); }
+  if (confirm('매매 기록을 전부 삭제할까요?')) { ACC.remove('history'); renderHistory(); }
 });
 document.getElementById('resetAll').addEventListener('click', () => {
   if (confirm('모든 설정/기록/포지션을 초기화할까요?')) { localStorage.clear(); location.reload(); }
@@ -2716,7 +2861,7 @@ function applyImport(parsed) {
   if (parsed.mode === 'SF' || parsed.mode === 'AG') {
     setMode(parsed.mode);
   }
-  STORE.set('boosterOn', parsed.boost === true);
+  ACC.set('boosterOn', parsed.boost === true);
   
   // 보유 포지션 저장
   if (parsed.openPositions && parsed.openPositions.length > 0) {
@@ -2747,17 +2892,17 @@ function applyImport(parsed) {
     }));
     // 날짜 역순 정렬 (최신이 위)
     incoming.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    STORE.set('history', [...incoming, ...existing]);
+    ACC.set('history', [...incoming, ...existing]);
   }
   
   // 최근 10일 실현손익 저장 (복리 계산용)
   if (parsed.recent10 && parsed.recent10.length > 0) {
-    STORE.set('recent10Pnl', parsed.recent10);
+    ACC.set('recent10Pnl', parsed.recent10);
   }
   
   // 누적 실현손익도 저장
   if (parsed.cumPnl !== null) {
-    STORE.set('cumulativePnl', parsed.cumPnl);
+    ACC.set('cumulativePnl', parsed.cumPnl);
   }
   
   document.getElementById('importPreview').style.display = 'none';
@@ -2813,12 +2958,12 @@ function applyManualImport() {
   if (!isNaN(peak)) document.getElementById('peakPrice').value = peak.toFixed(2);
   saveFormState();
   
-  STORE.set('boosterOn', boost);
-  STORE.set('todayMode', mode);
+  ACC.set('boosterOn', boost);
+  ACC.set('todayMode', mode);
   setMode(mode);
   
-  if (!isNaN(cumPnl)) STORE.set('cumulativePnl', cumPnl);
-  if (recent10.length > 0) STORE.set('recent10Pnl', recent10);
+  if (!isNaN(cumPnl)) ACC.set('cumulativePnl', cumPnl);
+  if (recent10.length > 0) ACC.set('recent10Pnl', recent10);
   
   closeManualImportModal();
   alert(
@@ -2833,10 +2978,92 @@ function applyManualImport() {
 }
 
 // ====================================================
+// 계좌 드롭다운 UI
+// ====================================================
+function renderAccountSelector() {
+  const accounts = ACC.list();
+  const currentId = ACC.current();
+  const current = accounts.find(a => a.id === currentId) || accounts[0];
+  
+  // 버튼 라벨
+  document.getElementById('accountBtnLabel').textContent = current ? current.name : '메인';
+  
+  // 드롭다운 목록
+  const listEl = document.getElementById('accountMenuList');
+  listEl.innerHTML = accounts.map(a => {
+    const isActive = a.id === currentId;
+    // 그 계좌의 총자산 (formState의 cash + positions 평가가)
+    const formState = ACC.getFor(a.id, 'formState', {});
+    const cash = parseFloat(formState.cash) || 0;
+    const positions = ACC.getFor(a.id, 'positions', []).filter(p => p.status === 'open' || !p.status);
+    const prevClose = parseFloat(formState.prevClose) || 0;
+    const evalAmt = positions.reduce((sum, p) => sum + (prevClose * p.qty), 0);
+    const total = cash + evalAmt;
+    
+    return `
+      <button class="account-menu-item ${isActive ? 'active' : ''}" data-account-id="${a.id}">
+        <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:${a.color || '#7a9ab8'};"></span>
+        <span>${a.name}</span>
+        <span class="account-menu-asset">$${Math.round(total).toLocaleString()}</span>
+      </button>
+    `;
+  }).join('');
+  
+  // 클릭 이벤트
+  listEl.querySelectorAll('.account-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.accountId;
+      if (id !== currentId) {
+        switchAccount(id);
+        location.reload();  // 계좌 전환 시 전체 새로고침 (가장 안전)
+      }
+      document.getElementById('accountMenu').style.display = 'none';
+    });
+  });
+}
+
+// 드롭다운 토글
+document.getElementById('accountBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = document.getElementById('accountMenu');
+  const isVisible = menu.style.display === 'block';
+  menu.style.display = isVisible ? 'none' : 'block';
+  if (!isVisible) renderAccountSelector();  // 열 때 새로 렌더 (자산 갱신)
+});
+
+// 외부 클릭 시 닫기
+document.addEventListener('click', (e) => {
+  const selector = document.querySelector('.account-selector');
+  if (selector && !selector.contains(e.target)) {
+    document.getElementById('accountMenu').style.display = 'none';
+  }
+});
+
+// 새 계좌 추가 (간단 버전 - 2단계에서 정식 모달로 교체)
+document.getElementById('addAccountBtn').addEventListener('click', () => {
+  const name = prompt('새 계좌 이름:', '');
+  if (!name || !name.trim()) return;
+  const broker = prompt('증권사 (선택):', '') || '';
+  const newId = addAccount(name.trim(), broker.trim());
+  switchAccount(newId);
+  alert(`✓ "${name}" 계좌 생성됨\n\n새 계좌로 전환합니다`);
+  location.reload();
+});
+
+// 계좌 관리 (2단계에서 구현)
+document.getElementById('manageAccountsBtn').addEventListener('click', () => {
+  alert('계좌 관리 기능은 2단계에서 추가됩니다.\n\n현재는:\n• 새 계좌 추가만 가능\n• 계좌 전환은 위 목록에서 선택\n\n(편집/삭제는 다음 업데이트)');
+  document.getElementById('accountMenu').style.display = 'none';
+});
+
+// ====================================================
 // 초기화
 // ====================================================
 (function init() {
   document.getElementById('todayChip').textContent = formatDateKorean(new Date());
+  
+  // 계좌 셀렉터 초기 렌더
+  renderAccountSelector();
   
   const today = new Date();
   const todayStr = fmtDate(today);
@@ -2845,16 +3072,16 @@ function applyManualImport() {
     const recent = sortedPriceDates.filter(d => d <= todayStr).slice(-1)[0];
     autoMode = modeMap[recent] || 'SF';
   }
-  setMode(STORE.get('todayMode', autoMode));
+  setMode(ACC.get('todayMode', autoMode));
   
-  const savedPeak = STORE.get('formState', {}).peakPrice;
+  const savedPeak = ACC.get('formState', {}).peakPrice;
   if (!savedPeak) document.getElementById('peakPrice').value = estimatePeak().toFixed(2);
   
   loadSettings(); loadFormState();
   
-  if (STORE.get('rsiPrev', '')) document.getElementById('rsiPrev').value = STORE.get('rsiPrev', '');
-  if (STORE.get('rsiCurr', '')) document.getElementById('rsiCurr').value = STORE.get('rsiCurr', '');
-  document.getElementById('prevWeekModeSelect').value = STORE.get('prevWeekMode', 'SF');
+  if (ACC.get('rsiPrev', '')) document.getElementById('rsiPrev').value = ACC.get('rsiPrev', '');
+  if (ACC.get('rsiCurr', '')) document.getElementById('rsiCurr').value = ACC.get('rsiCurr', '');
+  document.getElementById('prevWeekModeSelect').value = ACC.get('prevWeekMode', 'SF');
   
   renderAll();
 })();
