@@ -2543,8 +2543,10 @@ async function autoImportFromSheet() {
     };
     
     // 현재 보유 포지션 식별: T열(매수체결) 있고 X열(매도일) 비어있는 행
+    // 청산된 거래: T열(매수체결) 있고 X열(매도일) 채워져있는 행
     const openPositions = [];
-    const recentPnls = [];  // AG열 당일실현 (복리 계산용)
+    const closedTrades = [];     // 청산된 과거 거래
+    const recentPnls = [];       // AG열 당일실현 (복리 계산용)
     
     for (let i = 3; i < rows.length; i++) {  // 헤더 이후
       const row = rows[i];
@@ -2555,13 +2557,17 @@ async function autoImportFromSheet() {
       const buyPrice =   cleanNumber(row[col('T')]);   // T: 매수체결가
       const qty =        cleanNumber(row[col('U')]);   // U: 수량
       const sellDate =   row[col('X')];           // X: 매도일
+      const sellPrice =  cleanNumber(row[col('Y')]);   // Y: 매도체결가
       const sellTarget = cleanNumber(row[col('P')]);   // P: 매도목표가
       const expireDate = row[col('Q')];           // Q: 손절예정일
+      const realizedPnl = cleanNumber(row[col('AE')]); // AE: 실현손익 (행별)
       const boostStr =   (row[col('AZ')] || '').toString().trim().toUpperCase();
       const dailyPnl =   cleanNumber(row[col('AG')]);  // AG: 당일실현
       
+      const hasSellDate = sellDate && String(sellDate).trim() !== '';
+      
       // 현재 보유 = 매수체결 있고 매도일 비어있음
-      if (buyPrice && qty && (!sellDate || String(sellDate).trim() === '')) {
+      if (buyPrice && qty && !hasSellDate) {
         openPositions.push({
           buyDate: String(dateStr || '').trim(),
           mode: (mode || 'SF').trim(),
@@ -2571,6 +2577,36 @@ async function autoImportFromSheet() {
           expireDate: String(expireDate || '').trim(),
           boosted: boostStr === 'TRUE' || boostStr === 'ON',
           sellRegistered: true,  // 시트에 있었으니 이미 증권사 등록된 상태
+        });
+      }
+      
+      // 청산된 거래 = 매수체결 + 매도일 + 매도체결가 모두 있음
+      if (buyPrice && qty && hasSellDate && sellPrice) {
+        // 매도 종류 판별 (목표체결 vs 만료 MOC)
+        // 우선 자동 추론: 매도일 >= 손절예정일 이면 만료
+        let exitType = 'TARGET';  // 기본: 목표체결
+        try {
+          const sellD = String(sellDate).trim();
+          const expD = String(expireDate || '').trim();
+          if (expD && sellD >= expD) {
+            exitType = 'EXPIRE';
+          }
+        } catch (e) { /* 날짜 비교 실패 무시 */ }
+        
+        // TODO: 사용자가 알려준 구분 컬럼이 있으면 그걸 우선 사용
+        // const exitTypeRaw = row[col('?')];  // 컬럼 확인 후 추가
+        
+        closedTrades.push({
+          buyDate: String(dateStr || '').trim(),
+          sellDate: String(sellDate).trim(),
+          mode: (mode || 'SF').trim(),
+          buyPrice,
+          exitPrice: sellPrice,
+          qty: Math.round(qty),
+          sellTarget: sellTarget || 0,
+          realizedPnl: realizedPnl !== null ? realizedPnl : Math.round((sellPrice - buyPrice) * qty * 100) / 100,
+          boosted: boostStr === 'TRUE' || boostStr === 'ON',
+          exitType,
         });
       }
       
@@ -2592,6 +2628,7 @@ async function autoImportFromSheet() {
       peak: todayData.peak,
       boost: todayData.boost === 'TRUE' || todayData.boost === 'ON',
       openPositions,
+      closedTrades,        // 청산된 과거 거래 추가
       recent10,
       rowCount: rows.length,
       // 디버그용
@@ -2649,8 +2686,9 @@ function showImportPreview(parsed) {
       모드: <strong>${fmtStr(parsed.mode)}</strong><br>
       티어: <strong>${parsed.tier !== null ? parsed.tier : '-'}</strong><br>
       부스트: <strong>${parsed.boost ? 'ON' : 'OFF'}</strong><br>
-      <div style="color:var(--text-dim); font-size:11px; margin-top:8px; margin-bottom:4px;">포지션 / 복리</div>
-      보유 포지션: <strong>${parsed.openPositions.length}개</strong><br>
+      <div style="color:var(--text-dim); font-size:11px; margin-top:8px; margin-bottom:4px;">포지션 / 복리 / 기록</div>
+      현재 보유: <strong>${parsed.openPositions.length}개</strong><br>
+      과거 거래: <strong>${parsed.closedTrades ? parsed.closedTrades.length : 0}건</strong> (청산 완료)<br>
       최근 10일 실현: <strong>[${parsed.recent10.map(n => n.toFixed(0)).join(', ')}]</strong>
     </div>
     <div style="margin-top:10px; padding:10px; background:rgba(196,113,113,0.08); border-radius:6px; font-size:11px; color:var(--yellow);">
@@ -2691,6 +2729,27 @@ function applyImport(parsed) {
     setPositions([...existing, ...incoming]);
   }
   
+  // 과거 청산 거래 → history에 추가
+  if (parsed.closedTrades && parsed.closedTrades.length > 0) {
+    const existing = getHistory();
+    const incoming = parsed.closedTrades.map(t => ({
+      id: 'IMPH' + Date.now() + Math.random().toString(36).slice(2, 6),
+      date: t.sellDate,           // 매도된 날짜를 history 날짜로
+      type: t.exitType === 'EXPIRE' ? 'SELL_EXPIRE' : 'SELL_TARGET',
+      mode: t.mode,
+      buyDate: t.buyDate,
+      buyPrice: t.buyPrice,
+      exitPrice: t.exitPrice,
+      qty: t.qty,
+      sellTarget: t.sellTarget,
+      boosted: t.boosted,
+      realizedPnl: t.realizedPnl,
+    }));
+    // 날짜 역순 정렬 (최신이 위)
+    incoming.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    STORE.set('history', [...incoming, ...existing]);
+  }
+  
   // 최근 10일 실현손익 저장 (복리 계산용)
   if (parsed.recent10 && parsed.recent10.length > 0) {
     STORE.set('recent10Pnl', parsed.recent10);
@@ -2713,8 +2772,9 @@ function applyImport(parsed) {
     `• 모드: ${parsed.mode || '-'}\n` +
     `• 부스트: ${parsed.boost ? 'ON' : 'OFF'}\n` +
     `• 보유 포지션: ${parsed.openPositions.length}개\n` +
+    `• 과거 거래: ${parsed.closedTrades ? parsed.closedTrades.length : 0}건\n` +
     `• 최근 10일 실현: ${parsed.recent10.length}개\n\n` +
-    `"오늘" 탭과 "보유" 탭에서 확인하세요`
+    `각 탭에서 확인하세요`
   );
   
   renderAll();
