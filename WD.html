@@ -1,117 +1,167 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>위대리 리밸런싱 계산기</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600&family=JetBrains+Mono:wght@500&display=swap');
-  
-  :root {
-    --bg: #0f0e0c; --surface: #1a1816; --border: #3a3632;
-    --text: #e8e3dc; --text-dim: #9a9188;
-    --accent: #d4a574; --green: #7ca982; --red: #c47171;
-  }
-  
-  body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans KR', sans-serif; padding: 20px; }
-  .container { max-width: 480px; margin: 0 auto; background: var(--surface); padding: 24px; border-radius: 12px; border: 1px solid var(--border); }
-  h2 { font-size: 1.2rem; color: var(--accent); margin-bottom: 20px; text-align: center; }
-  
-  .input-group { margin-bottom: 16px; }
-  .input-group label { display: block; font-size: 0.85rem; color: var(--text-dim); margin-bottom: 6px; }
-  .input-group input, .input-group select { 
-    width: 100%; padding: 12px; background: var(--bg); border: 1px solid var(--border); 
-    color: var(--text); font-family: 'JetBrains Mono', monospace; border-radius: 6px; font-size: 1rem;
-  }
-  .input-group input:focus { border-color: var(--accent); outline: none; }
-  
-  .result-box { margin-top: 24px; padding: 16px; background: var(--bg); border-radius: 8px; border: 1px solid var(--border); }
-  .result-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.95rem; }
-  .result-val { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
-  .buy { color: var(--green); } .sell { color: var(--red); }
-  
-  button { 
-    width: 100%; padding: 14px; margin-top: 10px; background: var(--accent); color: var(--bg); 
-    border: none; border-radius: 6px; font-weight: 600; font-size: 1rem; cursor: pointer; 
-  }
-  button:hover { opacity: 0.9; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>위대리 자동 리밸런싱 v1.0</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600&family=JetBrains+Mono:wght@500&display=swap');
+        :root {
+            --bg: #0f0e0c; --surface: #1a1816; --border: #3a3632;
+            --text: #e8e3dc; --text-dim: #9a9188;
+            --accent: #d4a574; --green: #7ca982; --red: #c47171;
+        }
+        body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans KR', sans-serif; padding: 15px; margin: 0; }
+        .container { max-width: 500px; margin: 0 auto; background: var(--surface); padding: 20px; border-radius: 16px; border: 1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { font-size: 1.3rem; color: var(--accent); margin-bottom: 20px; text-align: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; }
+        
+        .card { background: var(--bg); padding: 16px; border-radius: 10px; margin-bottom: 15px; border: 1px solid var(--border); }
+        .label { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 8px; display: block; }
+        input { 
+            width: 100%; padding: 12px; background: #25221f; border: 1px solid var(--border); 
+            color: var(--text); font-family: 'JetBrains Mono', monospace; border-radius: 8px; font-size: 1.1rem; box-sizing: border-box;
+        }
+        input:focus { border-color: var(--accent); outline: none; }
+
+        .zone-display { text-align: center; padding: 15px; border-radius: 8px; margin-bottom: 15px; font-weight: 600; font-size: 1.2rem; }
+        .zone-high_high { background: rgba(196, 113, 113, 0.2); color: var(--red); border: 1px solid var(--red); }
+        .zone-mid { background: rgba(124, 169, 130, 0.2); color: var(--green); border: 1px solid var(--green); }
+        
+        .result-item { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 0.95rem; }
+        .result-val { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+        
+        button { 
+            width: 100%; padding: 16px; background: var(--accent); color: var(--bg); 
+            border: none; border-radius: 8px; font-weight: 600; font-size: 1.1rem; cursor: pointer; transition: 0.2s;
+        }
+        button:active { transform: scale(0.98); }
+        .footer { font-size: 0.7rem; color: var(--text-dim); text-align: center; margin-top: 20px; line-height: 1.4; }
+    </style>
 </head>
 <body>
 
 <div class="container">
-  <h2>위대리(5구간) 계산기</h2>
-  
-  <div class="input-group">
-    <label>전주 포트폴리오 자산 ($)</label>
-    <input type="number" id="prevAsset" placeholder="예: 10000">
-  </div>
-  <div class="input-group">
-    <label>현재 포트폴리오 자산 ($)</label>
-    <input type="number" id="currAsset" placeholder="예: 10500">
-  </div>
-  <div class="input-group">
-    <label>QQQ 편차 기준 현재 구간</label>
-    <select id="zoneSelect">
-      <option value="high_high">고고평가 (매도 384% / 매수 349%)</option>
-      <option value="high">고평가 (매도 164% / 매수 468%)</option>
-      <option value="mid" selected>중간가 (매도 10% / 매수 18%)</option>
-      <option value="low">저평가 (매도 19% / 매수 464%)</option>
-      <option value="low_low">저저평가 (매도 25% / 매수 184%)</option>
-    </select>
-  </div>
-  
-  <button onclick="calculate()">리밸런싱 계산하기</button>
+    <h2>위대리 5구간 자동 리밸런싱</h2>
 
-  <div class="result-box" id="resultBox" style="display: none;">
-    <div class="result-row"><span>자산 증감 (Delta):</span> <span class="result-val" id="deltaVal"></span></div>
-    <div class="result-row"><span>매매 지시:</span> <span class="result-val" id="actionVal"></span></div>
-    <div class="result-row"><span>목표 금액:</span> <span class="result-val" id="targetAmount"></span></div>
-    <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 10px; text-align: right;">* 최소 10% 주식 비중 제한 미반영(수식 확인용)</div>
-  </div>
+    <div class="card">
+        <label class="label">Step 1. 현재 QQQ 가격 ($)</label>
+        <input type="number" id="qqqPrice" step="0.01" placeholder="금요일 종가 입력" oninput="autoUpdate()">
+    </div>
+
+    <div id="zoneStatus" class="zone-display" style="display:none;">계산 중...</div>
+
+    <div class="card">
+        <label class="label">Step 2. 포트폴리오 자산 ($)</label>
+        <div style="margin-bottom: 10px;">
+            <span class="label" style="font-size: 0.75rem;">지난주 총자산</span>
+            <input type="number" id="prevAsset" step="0.01">
+        </div>
+        <div>
+            <span class="label" style="font-size: 0.75rem;">현재 총자산 (리밸런싱 전)</span>
+            <input type="number" id="currAsset" step="0.01">
+        </div>
+    </div>
+
+    <button onclick="calculateTrade()">최종 매매 금액 산출</button>
+
+    <div id="resultBox" class="card" style="margin-top:15px; display:none; border-color: var(--accent);">
+        <div class="result-item"><span>추세선 가격:</span> <span class="result-val" id="trendVal"></span></div>
+        <div class="result-item"><span>추세 편차:</span> <span class="result-val" id="devVal"></span></div>
+        <div class="result-item"><span>자산 증감:</span> <span class="result-val" id="deltaVal"></span></div>
+        <hr style="border: 0; border-top: 1px solid var(--border); margin: 10px 0;">
+        <div class="result-item" style="font-size: 1.1rem;">
+            <span>주문 지시:</span> 
+            <span id="finalAction" style="font-weight: 700;"></span>
+        </div>
+    </div>
+
+    <div class="footer">
+        * 본 도구는 올려주신 엑셀(NATAS v6.0) 및 파이썬 로직을 기반으로 합니다.<br>
+        * 추세선 기준일: 2010-02-12 (TQQQ 상장일)<br>
+        * 데이터는 브라우저에 자동 저장됩니다.
+    </div>
 </div>
 
 <script>
-  const ZONE_RATIOS = {
-    'high_high': { sell: 3.84, buy: 3.49 },
-    'high': { sell: 1.64, buy: 4.68 },
-    'mid': { sell: 0.10, buy: 0.18 },
-    'low': { sell: 0.19, buy: 4.64 },
-    'low_low': { sell: 0.25, buy: 1.84 }
-  };
+    // --- 위대리 전략 파라미터 ---
+    const START_DATE = new Date('2010-02-12');
+    const SLOPE = 0.00331; // 사용자 데이터 기반 주간 로그 기울기 근사치
+    const INTERCEPT = 3.82; // 사용자 데이터 기반 절편 근사치
 
-  function calculate() {
-    const prev = parseFloat(document.getElementById('prevAsset').value);
-    const curr = parseFloat(document.getElementById('currAsset').value);
-    const zone = document.getElementById('zoneSelect').value;
-    
-    if(!prev || !curr) { alert("자산을 정확히 입력해주세요."); return; }
+    const ZONE_RATIOS = {
+        'high_high': { label: '고고평가', sell: 3.84, buy: 3.49, min: 0.095 },
+        'high': { label: '고평가', sell: 1.64, buy: 4.68, min: 0.060 },
+        'mid': { label: '중간가', sell: 0.10, buy: 0.18, min: -0.100 },
+        'low': { label: '저평가', sell: 0.19, buy: 4.64, min: -0.125 },
+        'low_low': { label: '저저평가', sell: 0.25, buy: 1.84, min: -Infinity }
+    };
 
-    const delta = curr - prev;
-    const ratio = ZONE_RATIOS[zone];
-    
-    document.getElementById('resultBox').style.display = 'block';
-    const deltaSpan = document.getElementById('deltaVal');
-    const actionSpan = document.getElementById('actionVal');
-    const amountSpan = document.getElementById('targetAmount');
+    // 페이지 로드 시 저장된 데이터 불러오기
+    window.onload = () => {
+        document.getElementById('prevAsset').value = localStorage.getItem('prevAsset') || '';
+        document.getElementById('qqqPrice').value = localStorage.getItem('lastQqq') || '';
+    };
 
-    deltaSpan.innerText = `$${delta > 0 ? '+' : ''}${delta.toFixed(2)}`;
-    deltaSpan.className = 'result-val ' + (delta > 0 ? 'buy' : 'sell'); // 색상 편의상
-
-    if (delta > 0) {
-      actionSpan.innerText = "일부 매도 (이익 실현)";
-      actionSpan.className = 'result-val sell';
-      amountSpan.innerText = `$${(delta * ratio.sell).toFixed(2)} 매도`;
-    } else if (delta < 0) {
-      actionSpan.innerText = "추가 매수 (손실 물타기)";
-      actionSpan.className = 'result-val buy';
-      amountSpan.innerText = `$${(Math.abs(delta) * ratio.buy).toFixed(2)} 매수`;
-    } else {
-      actionSpan.innerText = "HOLD (관망)";
-      actionSpan.className = 'result-val';
-      amountSpan.innerText = "$0.00";
+    function getWeeksSinceStart() {
+        const now = new Date();
+        const diff = now - START_DATE;
+        return diff / (1000 * 60 * 60 * 24 * 7);
     }
-  }
+
+    function autoUpdate() {
+        const qqq = parseFloat(document.getElementById('qqqPrice').value);
+        if (!qqq) return;
+
+        const weeks = getWeeksSinceStart();
+        const trendPrice = Math.exp(INTERCEPT + SLOPE * weeks);
+        const dev = (qqq / trendPrice) - 1;
+
+        let zoneKey = 'low_low';
+        if (dev > ZONE_RATIOS.high_high.min) zoneKey = 'high_high';
+        else if (dev > ZONE_RATIOS.high.min) zoneKey = 'high';
+        else if (dev > ZONE_RATIOS.mid.min) zoneKey = 'mid';
+        else if (dev > ZONE_RATIOS.low.min) zoneKey = 'low';
+
+        const zone = ZONE_RATIOS[zoneKey];
+        const display = document.getElementById('zoneStatus');
+        display.style.display = 'block';
+        display.innerText = `현재 구간: ${zone.label} (편차: ${(dev * 100).toFixed(2)}%)`;
+        display.className = `zone-display zone-${zoneKey === 'high_high' || zoneKey === 'high' ? 'high_high' : 'mid'}`;
+
+        return { dev, trendPrice, zoneKey };
+    }
+
+    function calculateTrade() {
+        const update = autoUpdate();
+        const prev = parseFloat(document.getElementById('prevAsset').value);
+        const curr = parseFloat(document.getElementById('currAsset').value);
+        
+        if (!update || !prev || !curr) { alert("모든 수치를 입력해주세요."); return; }
+
+        const delta = curr - prev;
+        const ratios = ZONE_RATIOS[update.zoneKey];
+        let tradeAmount = 0;
+        let actionText = "";
+
+        if (delta > 0) {
+            tradeAmount = delta * ratios.sell;
+            actionText = `<span style="color:var(--red)">TQQQ $${tradeAmount.toLocaleString(undefined, {maximumFractionDigits:2})} 매도</span>`;
+        } else {
+            tradeAmount = Math.abs(delta) * ratios.buy;
+            actionText = `<span style="color:var(--green)">TQQQ $${tradeAmount.toLocaleString(undefined, {maximumFractionDigits:2})} 매수</span>`;
+        }
+
+        // 결과 표시
+        document.getElementById('resultBox').style.display = 'block';
+        document.getElementById('trendVal').innerText = `$${update.trendPrice.toFixed(2)}`;
+        document.getElementById('devVal').innerText = `${(update.dev * 100).toFixed(2)}%`;
+        document.getElementById('deltaVal').innerText = `$${delta.toFixed(2)}`;
+        document.getElementById('finalAction').innerHTML = actionText;
+
+        // 데이터 저장
+        localStorage.setItem('prevAsset', curr);
+        localStorage.setItem('lastQqq', document.getElementById('qqqPrice').value);
+    }
 </script>
 </body>
 </html>
