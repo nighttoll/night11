@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>위대리 클라우드 대시보드</title>
+    <title>위대리 클라우드 대시보드 v2.5</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
         
@@ -26,14 +26,12 @@
         .card { background: #211f1d; padding: 18px; border-radius: 14px; border: 1px solid var(--border); }
         .card-title { font-size: 0.85rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; margin-bottom: 15px; display: block; }
         
-        /* 주가 및 지표 */
         .price-display { font-family: 'JetBrains Mono', monospace; font-size: 2.2rem; font-weight: 700; margin-bottom: 15px; }
         .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .stat-item { background: var(--bg); padding: 10px; border-radius: 8px; text-align: center; }
         .stat-label { font-size: 0.7rem; color: var(--text-dim); margin-bottom: 2px; }
         .stat-val { font-family: 'JetBrains Mono', monospace; font-size: 1rem; }
 
-        /* 주문 계산기 */
         .input-row { margin-bottom: 10px; }
         .input-row label { display: block; font-size: 0.75rem; color: var(--text-dim); margin-bottom: 5px; }
         input { width: 100%; padding: 12px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px; font-family: 'JetBrains Mono'; font-size: 1rem; }
@@ -42,15 +40,13 @@
         .btn-fetch { background: #2a2825; color: var(--text); border: 1px solid var(--border); margin-bottom: 10px; }
         .btn-calc { background: var(--accent); color: var(--bg); font-size: 1rem; }
         
-        /* 거래 내역 테이블 */
-        .history-container { max-height: 250px; overflow-y: auto; font-size: 0.8rem; }
+        .history-container { max-height: 300px; overflow-y: auto; font-size: 0.8rem; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
         th { position: sticky; top: 0; background: #252321; color: var(--text-dim); padding: 10px 5px; border-bottom: 1px solid var(--border); }
         td { padding: 10px 5px; border-bottom: 1px solid #2a2825; font-family: 'JetBrains Mono'; }
         .val-buy { color: var(--green); }
         .val-sell { color: var(--red); }
 
-        /* 알림창 */
         .order-box { margin-top: 15px; padding: 15px; border-radius: 10px; background: rgba(212, 165, 116, 0.1); border: 1px dashed var(--accent); text-align: center; display: none; }
     </style>
 </head>
@@ -58,7 +54,7 @@
 
 <div class="dashboard">
     <div class="header">
-        <h1>위대리 CLOUD SYNC</h1>
+        <h1>위대리 CLOUD SYNC v2.5</h1>
         <p id="syncStatus"><span class="status-dot"></span>구글 시트 연결 대기 중...</p>
     </div>
 
@@ -100,7 +96,7 @@
                         <tr><th>날짜</th><th>구간</th><th>매매</th><th>총자산</th></tr>
                     </thead>
                     <tbody>
-                        <tr><td colspan="4" style="text-align:center; color:var(--text-dim);">시트 데이터를 불러와주세요.</td></tr>
+                        <tr><td colspan="4" style="text-align:center; color:var(--text-dim);">동기화 버튼을 눌러주세요.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -109,8 +105,8 @@
 </div>
 
 <script>
-    // ⚠️ 여기에 본인의 구글 시트 웹 게시(CSV) URL을 입력하세요!
-    const GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTf9Aun8Ym9N6l_6m_H_M6X_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m_X6m/pub?output=csv";
+    // 요청하신 구글 시트 웹 게시 CSV 주소 반영
+    const GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQo1ZDr9shbkGvfvYe8ML0P1WH_e5HnhRszghXg-K755M5730dO9riDYyS9vCiBDtqV3Zdf8cLzpBUC/pub?output=csv";
 
     const START_DATE = new Date('2010-02-12');
     const SLOPE = 0.00331; 
@@ -127,76 +123,74 @@
     let lastQqqPrice = 0;
     let currentZone = null;
 
-    // 1. 구글 시트 데이터 + 야후 주가 동시 동기화
     async function syncAllData() {
         const status = document.getElementById('syncStatus');
         status.innerHTML = `<span class="status-dot"></span>동기화 중...`;
 
         try {
-            // A. 주가 가져오기
+            // A. 야후 파이낸스 주간 종가 가져오기
             const qqqTarget = encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/QQQ?interval=1wk&range=1mo');
             const qqqRes = await fetch(`https://api.allorigins.win/get?url=${qqqTarget}`);
             const qqqData = JSON.parse((await qqqRes.json()).contents);
             lastQqqPrice = qqqData.chart.result[0].indicators.quote[0].close.filter(c => c !== null).pop();
             
-            // B. 구글 시트 가져오기
+            // B. 구글 시트 CSV 데이터 가져오기
             const sheetRes = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(GOOGLE_SHEET_URL)}`);
             const csvText = (await sheetRes.json()).contents;
             parseSheet(csvText);
 
-            // UI 업데이트
             updateMarketUI(lastQqqPrice);
             status.innerHTML = `<span class="status-dot status-online"></span>구글 시트 동기화 완료`;
         } catch (e) {
             console.error(e);
-            alert("동기화 실패. 시트 주소와 인터넷 연결을 확인하세요.");
+            alert("동기화 실패. 시트의 '웹에 게시' 설정을 확인하세요.");
             status.innerHTML = `<span class="status-dot" style="background:red;"></span>연결 실패`;
         }
     }
 
-    // 2. 시트 파싱 및 내역 추출
     function parseSheet(csv) {
+        // NATAS v6.0 구조 분석 (날짜:1, 구간:5, 실투입금:9, 포트폴리오자산:11)
         const rows = csv.split('\n').map(row => row.split(','));
         const tbody = document.querySelector('#historyTable tbody');
         tbody.innerHTML = "";
 
         let history = [];
-        // 시트 하단에서부터 실제 데이터가 있는 행 찾기 (v6.0 시트 구조 대응)
-        for (let i = rows.length - 1; i >= 0; i--) {
+        // 5행(index 4)부터 데이터 시작, 그 이전은 헤더 및 요약
+        for (let i = rows.length - 1; i >= 5; i--) {
             const row = rows[i];
-            const date = row[0]; // 날짜
-            const asset = parseFloat(row[row.length - 1]); // 보통 마지막 열이 총자산
+            if (row.length < 12) continue;
+
+            const date = row[1]?.trim();
+            const zone = row[5]?.trim();
+            const trade = row[9]?.trim() || "0";
+            const asset = parseFloat(row[11]?.replace(/[^0-9.-]+/g, ''));
 
             if (date && date.includes('/') && !isNaN(asset)) {
-                history.push({
-                    date: date,
-                    zone: row[5] || "-", // 구간이 기록된 열 (시트 구조에 따라 조정)
-                    trade: row[8] || "0", // 매매금액이 기록된 열
-                    asset: asset
-                });
+                history.push({ date, zone, trade, asset });
             }
         }
 
-        // 가장 최근 자산 세팅
         if(history.length > 0) {
+            // 가장 최근 행의 자산액을 '지난주 자산'으로 설정
             document.getElementById('prevAsset').value = history[0].asset.toFixed(2);
         }
 
-        // 최근 10개 거래 내역만 표시
-        history.slice(0, 10).forEach(h => {
+        // 거래 내역 테이블 업데이트 (최근 15개)
+        history.slice(0, 15).forEach(h => {
             const tr = document.createElement('tr');
-            const isBuy = h.trade.includes('+') || parseFloat(h.trade) > 0;
+            const tradeVal = parseFloat(h.trade.replace(/[^0-9.-]+/g, '')) || 0;
+            const tradeClass = tradeVal > 0 ? 'val-buy' : (tradeVal < 0 ? 'val-sell' : '');
+            
             tr.innerHTML = `
                 <td>${h.date}</td>
-                <td>${h.zone}</td>
-                <td class="${isBuy ? 'val-buy' : 'val-sell'}">${h.trade}</td>
+                <td style="font-weight:600;">${h.zone}</td>
+                <td class="${tradeClass}">${tradeVal !== 0 ? (tradeVal > 0 ? '+' : '') + tradeVal.toLocaleString() : '-'}</td>
                 <td>$${h.asset.toLocaleString()}</td>
             `;
             tbody.appendChild(tr);
         });
     }
 
-    // 3. 시장 분석 UI 업데이트
     function updateMarketUI(price) {
         const weeks = (new Date() - START_DATE) / (1000 * 60 * 60 * 24 * 7);
         const trend = Math.exp(INTERCEPT + SLOPE * weeks);
@@ -210,12 +204,11 @@
         document.getElementById('devVal').innerText = `${(dev * 100).toFixed(2)}%`;
     }
 
-    // 4. 주문 금액 계산
     function calculate() {
         const prev = parseFloat(document.getElementById('prevAsset').value);
         const curr = parseFloat(document.getElementById('currAsset').value);
 
-        if (!currentZone || isNaN(curr)) { alert("데이터 동기화 후 현재 자산을 입력하세요."); return; }
+        if (!currentZone || isNaN(curr)) { alert("먼저 동기화를 완료하고 현재 자산을 입력하세요."); return; }
 
         const delta = curr - prev;
         const box = document.getElementById('orderBox');
@@ -225,12 +218,12 @@
         box.style.display = 'block';
         if (delta > 0) {
             const amount = delta * currentZone.sell;
-            action.innerHTML = `<span style="color:var(--red)">TQQQ $${amount.toLocaleString()} 매도</span>`;
-            detail.innerText = `자산 증가분($${delta.toFixed(2)})의 ${currentZone.sell * 100}% 매도`;
+            action.innerHTML = `<span style="color:var(--red)">TQQQ $${amount.toLocaleString(undefined, {maximumFractionDigits:2})} 매도</span>`;
+            detail.innerText = `이익($${delta.toFixed(2)})의 ${currentZone.sell * 100}%를 매도합니다.`;
         } else if (delta < 0) {
             const amount = Math.abs(delta) * currentZone.buy;
-            action.innerHTML = `<span style="color:var(--green)">TQQQ $${amount.toLocaleString()} 매수</span>`;
-            detail.innerText = `자산 감소분($${Math.abs(delta).toFixed(2)})의 ${currentZone.buy * 100}% 매수`;
+            action.innerHTML = `<span style="color:var(--green)">TQQQ $${amount.toLocaleString(undefined, {maximumFractionDigits:2})} 매수</span>`;
+            detail.innerText = `손실($${Math.abs(delta).toFixed(2)})의 ${currentZone.buy * 100}%를 매수합니다.`;
         } else {
             action.innerText = "HOLD (관망)";
             detail.innerText = "자산 변동이 없습니다.";
