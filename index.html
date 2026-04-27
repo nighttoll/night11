@@ -3,260 +3,270 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>위대리 자동화 대시보드</title>
+    <title>위대리 자동화 대시보드 V2.0</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
         
         :root {
-            --bg: #121212; --surface: #1e1e1e; --border: #333;
-            --text: #f0f0f0; --text-dim: #a0a0a0;
-            --accent: #4da6ff; --accent-hover: #338be6;
-            --green: #4caf50; --red: #ff5252;
-            --high-color: #ff5252; --mid-color: #4caf50; --low-color: #ba68c8;
+            --bg: #0f0e0c; --surface: #1a1816; --border: #3a3632;
+            --text: #e8e3dc; --text-dim: #9a9188;
+            --accent: #d4a574; --accent-hover: #bc8f5f;
+            --green: #7ca982; --red: #c47171;
         }
         
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans KR', sans-serif; padding: 20px; display: flex; justify-content: center; }
+        body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans KR', sans-serif; padding: 15px; display: flex; justify-content: center; }
         
-        .dashboard { width: 100%; max-width: 540px; background: var(--surface); border-radius: 16px; border: 1px solid var(--border); overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
-        .header { background: #181818; padding: 20px; text-align: center; border-bottom: 1px solid var(--border); }
-        .header h1 { font-size: 1.4rem; color: var(--text); display: flex; align-items: center; justify-content: center; gap: 8px; }
-        .header p { font-size: 0.85rem; color: var(--text-dim); margin-top: 5px; }
+        .dashboard { width: 100%; max-width: 500px; background: var(--surface); border-radius: 20px; border: 1px solid var(--border); overflow: hidden; box-shadow: 0 15px 40px rgba(0,0,0,0.6); }
+        .header { background: #131210; padding: 25px 20px; text-align: center; border-bottom: 1px solid var(--border); }
+        .header h1 { font-size: 1.5rem; color: var(--accent); letter-spacing: -0.5px; }
+        .header p { font-size: 0.85rem; color: var(--text-dim); margin-top: 6px; }
         
-        .content { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+        .content { padding: 20px; display: flex; flex-direction: column; gap: 15px; }
         
-        .card { background: #252525; padding: 20px; border-radius: 12px; border: 1px solid #333; }
+        .card { background: #211f1d; padding: 18px; border-radius: 14px; border: 1px solid var(--border); }
         .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-        .card-title { font-size: 1rem; font-weight: 600; color: var(--text-dim); }
+        .card-title { font-size: 0.9rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
         
-        /* 주가 표시 영역 */
-        .price-box { display: flex; align-items: baseline; gap: 10px; }
-        .current-price { font-family: 'JetBrains Mono', monospace; font-size: 2.2rem; font-weight: 700; color: var(--accent); }
+        /* 주가 및 분석 영역 */
+        .price-display { font-family: 'JetBrains Mono', monospace; font-size: 2.4rem; font-weight: 700; color: var(--text); margin-bottom: 15px; }
+        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .stat-item { background: var(--bg); padding: 10px; border-radius: 8px; border: 1px solid var(--border); text-align: center; }
+        .stat-label { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 4px; }
+        .stat-val { font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; font-weight: 600; }
         
-        /* 버튼 */
-        button { 
-            background: var(--accent); color: #fff; border: none; padding: 10px 16px; border-radius: 8px; 
-            font-family: inherit; font-weight: 600; cursor: pointer; transition: 0.2s; font-size: 0.9rem;
-        }
-        button:hover { background: var(--accent-hover); }
-        button:active { transform: scale(0.97); }
-        button:disabled { background: #444; color: #888; cursor: not-allowed; }
-        
-        .fetch-btn { display: flex; align-items: center; gap: 6px; }
+        .zone-badge { text-align: center; padding: 14px; border-radius: 8px; font-weight: 700; font-size: 1.15rem; border: 1px solid transparent; }
         
         /* 입력 폼 */
-        .input-group { margin-bottom: 15px; }
-        .input-group label { display: block; font-size: 0.85rem; color: var(--text-dim); margin-bottom: 8px; }
-        input[type="number"] { 
-            width: 100%; padding: 14px; background: #121212; border: 1px solid var(--border); 
-            color: var(--text); font-family: 'JetBrains Mono', monospace; border-radius: 8px; font-size: 1.1rem;
+        .input-group { margin-bottom: 12px; }
+        .input-group label { display: block; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 6px; }
+        input { 
+            width: 100%; padding: 14px; background: var(--bg); border: 1px solid var(--border); 
+            color: var(--text); font-family: 'JetBrains Mono', monospace; border-radius: 10px; font-size: 1.1rem;
         }
         input:focus { border-color: var(--accent); outline: none; }
         
-        /* 구간 게이지/결과 */
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
-        .stat-box { background: #181818; padding: 12px; border-radius: 8px; text-align: center; border: 1px solid #333; }
-        .stat-label { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 4px; }
-        .stat-val { font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; font-weight: 600; }
+        /* 버튼 공통 */
+        button { 
+            border: none; border-radius: 10px; font-family: inherit; font-weight: 600; cursor: pointer; transition: 0.2s;
+        }
+        .primary-btn { width: 100%; padding: 18px; background: var(--accent); color: var(--bg); font-size: 1.1rem; margin-top: 10px; }
+        .secondary-btn { padding: 10px 15px; background: #2a2825; color: var(--text); border: 1px solid var(--border); font-size: 0.85rem; }
+        button:hover { filter: brightness(1.1); }
+        button:active { transform: scale(0.98); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* 결과 창 */
+        .result-panel { margin-top: 15px; padding: 20px; border-radius: 12px; background: rgba(212, 165, 116, 0.05); border: 1.5px dashed var(--accent); text-align: center; display: none; }
+        .action-label { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 10px; }
+        .action-amount { font-family: 'JetBrains Mono', monospace; font-size: 1.8rem; font-weight: 800; }
         
-        .zone-banner { text-align: center; padding: 16px; border-radius: 8px; font-weight: 700; font-size: 1.2rem; margin-top: 10px; border: 1px solid transparent; }
-        
-        .action-result { margin-top: 20px; padding: 20px; border-radius: 12px; background: rgba(77, 166, 255, 0.05); border: 1px dashed var(--accent); text-align: center; display: none; }
-        .action-result h3 { font-size: 1rem; color: var(--text-dim); margin-bottom: 10px; }
-        .action-text { font-family: 'JetBrains Mono', monospace; font-size: 1.6rem; font-weight: 700; }
-        .buy-color { color: var(--green); }
-        .sell-color { color: var(--red); }
-        .hold-color { color: var(--text); }
-        
-        /* 로딩 스피너 */
-        .loader { border: 3px solid #333; border-top: 3px solid #fff; border-radius: 50%; width: 14px; height: 14px; animation: spin 1s linear infinite; display: none; }
+        /* 로딩 애니메이션 */
+        .loading-spin { border: 2px solid rgba(255,255,255,0.1); border-top: 2px solid var(--text); border-radius: 50%; width: 14px; height: 14px; animation: spin 0.8s linear infinite; display: inline-block; margin-right: 8px; vertical-align: middle; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* 숨김처리 */
+        #csvFileInput { display: none; }
     </style>
 </head>
 <body>
 
 <div class="dashboard">
     <div class="header">
-        <h1>📊 위대리 자동화 대시보드</h1>
-        <p>5구간 전략 (NATAS v6.0 기반)</p>
+        <h1>📊 위대리 자동화 도구</h1>
+        <p>전략 기반 자산 관리 시스템 v2.0</p>
     </div>
 
     <div class="content">
-        <div class="card">
+        <div class="card" style="border-style: dashed;">
             <div class="card-header">
-                <span class="card-title">현재 QQQ 주가</span>
-                <button class="fetch-btn" id="fetchBtn" onclick="fetchQQQPrice()">
-                    <div class="loader" id="loader"></div>
-                    <span id="btnText">실시간 불러오기</span>
-                </button>
+                <span class="card-title">데이터 동기화</span>
+                <button class="secondary-btn" onclick="document.getElementById('csvFileInput').click()">CSV 파일 선택</button>
             </div>
-            <div class="price-box">
-                <span class="current-price" id="qqqPriceDisplay">$0.00</span>
-            </div>
-            <input type="hidden" id="qqqPriceInput"> </div>
-
-        <div class="card" id="analysisCard" style="display: none;">
-            <div class="grid-2">
-                <div class="stat-box">
-                    <div class="stat-label">추세선 적정가</div>
-                    <div class="stat-val" id="trendVal">$0.00</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">현재 편차</div>
-                    <div class="stat-val" id="devVal">0.00%</div>
-                </div>
-            </div>
-            <div class="zone-banner" id="zoneBanner">구간 판정 대기중</div>
+            <input type="file" id="csvFileInput" accept=".csv" onchange="loadFromCSV(this)">
+            <p id="csvStatus" style="font-size: 0.75rem; color: var(--text-dim); text-align: center;">기존 엑셀/구글 시트를 업로드하여 시작 자산을 설정하세요.</p>
         </div>
 
         <div class="card">
             <div class="card-header">
-                <span class="card-title">리밸런싱 계산</span>
+                <span class="card-title">실시간 분석 (QQQ 주간 데이터)</span>
+                <button class="secondary-btn" id="fetchBtn" onclick="fetchWeeklyPrice()">
+                    <span id="btnText">종가 불러오기</span>
+                </button>
             </div>
-            <div class="input-group">
-                <label>지난주 총 자산 ($)</label>
-                <input type="number" id="prevAsset" placeholder="예: 10000" step="0.01">
+            <div id="priceSection" style="display: none;">
+                <div class="price-display" id="qqqPriceDisplay">$0.00</div>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">추세선 적정가</div>
+                        <div class="stat-val" id="trendVal">$0.00</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">추세선 편차</div>
+                        <div class="stat-val" id="devVal">0.00%</div>
+                    </div>
+                </div>
+                <div class="zone-badge" id="zoneBadge">구간 판정 대기 중</div>
             </div>
-            <div class="input-group">
-                <label>현재 총 자산 ($) - 리밸런싱 전</label>
-                <input type="number" id="currAsset" placeholder="예: 10200" step="0.01">
-            </div>
-            
-            <button style="width: 100%; padding: 16px; margin-top: 10px; font-size: 1.1rem;" onclick="calculateAction()">최종 주문금액 산출</button>
+            <p id="fetchInfo" style="text-align: center; color: var(--text-dim); font-size: 0.8rem;">버튼을 누르면 가장 최근 주간 종가를 가져옵니다.</p>
+        </div>
 
-            <div class="action-result" id="actionResultBox">
-                <h3>이번 주 TQQQ 주문 지시</h3>
-                <div class="action-text" id="actionText"></div>
-                <p style="font-size: 0.8rem; color: var(--text-dim); margin-top: 15px;">* 계산 완료 시 현재 자산이 '지난주 자산'으로 자동 저장됩니다.</p>
+        <div class="card">
+            <div class="card-header"><span class="card-title">리밸런싱 계산</span></div>
+            <div class="input-group">
+                <label>지난주 자산 ($)</label>
+                <input type="number" id="prevAsset" step="0.01">
+            </div>
+            <div class="input-group">
+                <label>현재 자산 ($)</label>
+                <input type="number" id="currAsset" step="0.01">
+            </div>
+            <button class="primary-btn" onclick="calculateRebalance()">최종 주문금액 계산</button>
+
+            <div class="result-panel" id="resultPanel">
+                <div class="action-label">이번 주 TQQQ 주문 지시</div>
+                <div class="action-amount" id="actionAmount">---</div>
+                <p style="font-size: 0.75rem; color: var(--text-dim); margin-top: 15px;">※ 계산 시 현재 자산이 다음 주 시작 자산으로 자동 저장됩니다.</p>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-    // --- 위대리 핵심 파라미터 (파이썬/엑셀 기반) ---
+    // --- 설정 상수 (엑셀/파이썬 데이터 기반) ---
     const START_DATE = new Date('2010-02-12');
     const SLOPE = 0.00331; 
     const INTERCEPT = 3.82; 
 
-    // 구간별 매매 비율
     const ZONES = [
-        { key: 'high_high', label: '고고평가', min: 0.095, sell: 3.84, buy: 3.49, color: 'rgba(255,82,82,0.15)', border: '#ff5252', textColor: '#ff5252' },
-        { key: 'high', label: '고평가', min: 0.060, sell: 1.64, buy: 4.68, color: 'rgba(255,167,38,0.15)', border: '#ffa726', textColor: '#ffa726' },
-        { key: 'mid', label: '중간가', min: -0.100, sell: 0.10, buy: 0.18, color: 'rgba(76,175,80,0.15)', border: '#4caf50', textColor: '#4caf50' },
-        { key: 'low', label: '저평가', min: -0.125, sell: 0.19, buy: 4.64, color: 'rgba(66,165,245,0.15)', border: '#42a5f5', textColor: '#42a5f5' },
-        { key: 'low_low', label: '저저평가', min: -Infinity, sell: 0.25, buy: 1.84, color: 'rgba(186,104,200,0.15)', border: '#ba68c8', textColor: '#ba68c8' }
+        { label: '고고평가', min: 0.095, sell: 3.84, buy: 3.49, color: 'rgba(196,113,113,0.15)', text: '#c47171' },
+        { label: '고평가', min: 0.060, sell: 1.64, buy: 4.68, color: 'rgba(255,167,38,0.15)', text: '#ffa726' },
+        { label: '중간가', min: -0.100, sell: 0.10, buy: 0.18, color: 'rgba(124,169,130,0.15)', text: '#7ca982' },
+        { label: '저평가', min: -0.125, sell: 0.19, buy: 4.64, color: 'rgba(66,165,245,0.15)', text: '#42a5f5' },
+        { label: '저저평가', min: -Infinity, sell: 0.25, buy: 1.84, color: 'rgba(186,104,200,0.15)', text: '#ba68c8' }
     ];
 
-    let currentZoneData = null; // 현재 판정된 구간 저장
+    let lastQqqPrice = null;
+    let selectedZone = null;
 
-    // 페이지 로드 시 로컬 스토리지 데이터 복구
     window.onload = () => {
-        const savedPrevAsset = localStorage.getItem('widae_prevAsset');
-        if (savedPrevAsset) document.getElementById('prevAsset').value = savedPrevAsset;
+        const savedAsset = localStorage.getItem('widae_last_asset');
+        if (savedAsset) document.getElementById('prevAsset').value = savedAsset;
     };
 
-    // 1. 야후 파이낸스에서 실시간 QQQ 주가 가져오기 (CORS 우회 Proxy 사용)
-    async function fetchQQQPrice() {
-        const btnText = document.getElementById('btnText');
-        const loader = document.getElementById('loader');
+    // 1. 주간 종가 가져오기 (금요일/최종 거래일 대응)
+    async function fetchWeeklyPrice() {
         const btn = document.getElementById('fetchBtn');
+        const btnText = document.getElementById('btnText');
         
-        btnText.innerText = "불러오는 중...";
-        loader.style.display = "block";
         btn.disabled = true;
+        btnText.innerHTML = `<span class="loading-spin"></span>불러오는 중...`;
 
         try {
-            // AllOrigins 무료 CORS 프록시를 통해 Yahoo Finance API 접근
-            const targetUrl = encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/QQQ?interval=1d&range=1d');
-            const proxyUrl = `https://api.allorigins.win/get?url=${targetUrl}`;
+            // 야후 파이낸스에서 주봉(1wk) 데이터 1달치 요청
+            const target = encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/QQQ?interval=1wk&range=1mo');
+            const url = `https://api.allorigins.win/get?url=${target}`;
             
-            const response = await fetch(proxyUrl);
-            const data = await response.json();
-            const yfData = JSON.parse(data.contents);
+            const response = await fetch(url);
+            const rawData = await response.json();
+            const data = JSON.parse(rawData.contents);
             
-            const price = yfData.chart.result[0].meta.regularMarketPrice;
+            const closes = data.chart.result[0].indicators.quote[0].close;
+            // 가장 최근 확정된 종가(null 제외) 추출
+            lastQqqPrice = closes.filter(c => c !== null).pop();
             
-            // UI 업데이트
-            document.getElementById('qqqPriceDisplay').innerText = `$${price.toFixed(2)}`;
-            document.getElementById('qqqPriceInput').value = price;
-            
-            // 구간 자동 분석 실행
-            analyzeZone(price);
-
-        } catch (error) {
-            console.error("데이터를 불러오는 중 오류 발생:", error);
-            alert("주가를 가져오는데 실패했습니다. 야후 파이낸스 서버 문제일 수 있습니다. 수동으로 계산해주세요.");
-            // 수동 입력을 위한 처리 (프롬프트로 받기)
-            const manualPrice = prompt("현재 QQQ 주가를 직접 입력해주세요:");
-            if(manualPrice && !isNaN(manualPrice)) {
-                document.getElementById('qqqPriceDisplay').innerText = `$${parseFloat(manualPrice).toFixed(2)}`;
-                document.getElementById('qqqPriceInput').value = parseFloat(manualPrice);
-                analyzeZone(parseFloat(manualPrice));
-            }
+            updateAnalysis(lastQqqPrice);
+            document.getElementById('priceSection').style.display = 'block';
+            document.getElementById('fetchInfo').style.display = 'none';
+        } catch (e) {
+            alert("주가 로드 실패. 수동 입력을 권장합니다.");
         } finally {
-            btnText.innerText = "새로고침";
-            loader.style.display = "none";
             btn.disabled = false;
+            btnText.innerText = "종가 로드됨";
         }
     }
 
-    // 2. 주가를 바탕으로 5구간 분석 및 추세선 계산
-    function analyzeZone(qqqPrice) {
-        const now = new Date();
-        const weeks = (now - START_DATE) / (1000 * 60 * 60 * 24 * 7);
-        const trendPrice = Math.exp(INTERCEPT + SLOPE * weeks);
-        const dev = (qqqPrice / trendPrice) - 1;
+    // 2. 추세선 분석 및 구간 판정
+    function updateAnalysis(price) {
+        const weeks = (new Date() - START_DATE) / (1000 * 60 * 60 * 24 * 7);
+        const trend = Math.exp(INTERCEPT + SLOPE * weeks);
+        const dev = (price / trend) - 1;
 
-        // 구간 판정
-        currentZoneData = ZONES.find(z => dev > z.min);
+        selectedZone = ZONES.find(z => dev > z.min);
 
-        // UI 표시
-        document.getElementById('analysisCard').style.display = 'block';
-        document.getElementById('trendVal').innerText = `$${trendPrice.toFixed(2)}`;
+        document.getElementById('qqqPriceDisplay').innerText = `$${price.toFixed(2)}`;
+        document.getElementById('trendVal').innerText = `$${trend.toFixed(2)}`;
         document.getElementById('devVal').innerText = `${(dev * 100).toFixed(2)}%`;
-        document.getElementById('devVal').style.color = currentZoneData.textColor;
+        document.getElementById('devVal').style.color = selectedZone.text;
 
-        const banner = document.getElementById('zoneBanner');
-        banner.innerText = `현재 상태 : ${currentZoneData.label}`;
-        banner.style.backgroundColor = currentZoneData.color;
-        banner.style.borderColor = currentZoneData.border;
-        banner.style.color = currentZoneData.textColor;
+        const badge = document.getElementById('zoneBadge');
+        badge.innerText = `현재 구간: ${selectedZone.label}`;
+        badge.style.backgroundColor = selectedZone.color;
+        badge.style.color = selectedZone.text;
+        badge.style.borderColor = selectedZone.text;
     }
 
-    // 3. 자산 증감분에 따른 최종 리밸런싱 주문금액 산출
-    function calculateAction() {
-        const qqqPrice = parseFloat(document.getElementById('qqqPriceInput').value);
-        const prevAsset = parseFloat(document.getElementById('prevAsset').value);
-        const currAsset = parseFloat(document.getElementById('currAsset').value);
+    // 3. 리밸런싱 주문금액 계산
+    function calculateRebalance() {
+        const prev = parseFloat(document.getElementById('prevAsset').value);
+        const curr = parseFloat(document.getElementById('currAsset').value);
 
-        if (!qqqPrice || !currentZoneData) {
-            alert("먼저 상단의 [실시간 불러오기] 버튼을 눌러 QQQ 가격을 업데이트해주세요.");
-            return;
-        }
-        if (isNaN(prevAsset) || isNaN(currAsset)) {
-            alert("지난주 자산과 현재 자산을 정확히 입력해주세요.");
+        if (!lastQqqPrice || isNaN(prev) || isNaN(curr)) {
+            alert("주가를 먼저 불러오고 자산 금액을 입력해주세요.");
             return;
         }
 
-        const delta = currAsset - prevAsset;
-        const resultBox = document.getElementById('actionResultBox');
-        const textSpan = document.getElementById('actionText');
-        
-        resultBox.style.display = 'block';
+        const delta = curr - prev;
+        let resultHtml = "";
 
         if (delta > 0) {
-            const sellAmount = delta * currentZoneData.sell;
-            textSpan.innerHTML = `<span class="sell-color">TQQQ $${sellAmount.toLocaleString(undefined, {maximumFractionDigits:2})} 매도</span>`;
+            const amount = delta * selectedZone.sell;
+            resultHtml = `<span style="color:var(--red)">TQQQ $${amount.toLocaleString(undefined, {maximumFractionDigits:2})} 매도</span>`;
         } else if (delta < 0) {
-            const buyAmount = Math.abs(delta) * currentZoneData.buy;
-            textSpan.innerHTML = `<span class="buy-color">TQQQ $${buyAmount.toLocaleString(undefined, {maximumFractionDigits:2})} 매수</span>`;
+            const amount = Math.abs(delta) * selectedZone.buy;
+            resultHtml = `<span style="color:var(--green)">TQQQ $${amount.toLocaleString(undefined, {maximumFractionDigits:2})} 매수</span>`;
         } else {
-            textSpan.innerHTML = `<span class="hold-color">HOLD (관망)</span>`;
+            resultHtml = "<span>HOLD (관망)</span>";
         }
 
-        // 성공적으로 리밸런싱을 마쳤다면, 현재 자산을 '지난주 자산'으로 로컬스토리지에 덮어쓰기
-        localStorage.setItem('widae_prevAsset', currAsset);
+        document.getElementById('resultPanel').style.display = 'block';
+        document.getElementById('actionAmount').innerHTML = resultHtml;
+        
+        // 자동 저장 (다음 주 계산을 위해)
+        localStorage.setItem('widae_last_asset', curr);
+    }
+
+    // 4. CSV 파일에서 마지막 자산 데이터 읽기
+    function loadFromCSV(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.readAsText(file, "EUC-KR"); // 한글 엑셀 대응
+        reader.onload = (e) => {
+            const rows = e.target.result.split('\n');
+            let foundAsset = null;
+
+            // 시트의 마지막 행부터 역순으로 탐색하여 자산 숫자 추출
+            for (let i = rows.length - 1; i >= 0; i--) {
+                const cells = rows[i].split(',');
+                // 자산 규모는 보통 1000달러 이상의 큰 숫자이므로 필터링
+                const numbers = cells.map(c => parseFloat(c.replace(/[^0-9.-]+/g, ''))).filter(n => !isNaN(n) && n > 1000);
+                if (numbers.length > 0) {
+                    foundAsset = numbers.pop(); // 가장 우측 숫자를 자산으로 간주
+                    break;
+                }
+            }
+
+            if (foundAsset) {
+                document.getElementById('prevAsset').value = foundAsset.toFixed(2);
+                localStorage.setItem('widae_last_asset', foundAsset);
+                document.getElementById('csvStatus').innerText = `✅ 동기화 완료: $${foundAsset.toLocaleString()} 불러옴`;
+                document.getElementById('csvStatus').style.color = "var(--green)";
+            } else {
+                alert("자산 데이터를 찾을 수 없습니다.");
+            }
+        };
     }
 </script>
 </body>
