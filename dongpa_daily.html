@@ -2482,6 +2482,42 @@ function extractSheetId(url) {
   return match ? match[1] : null;
 }
 
+// 시트 날짜를 YYYY-MM-DD로 정규화
+// 시트의 다양한 날짜 형식을 처리:
+//   '24.09.19.(목)'    → '2024-09-19'
+//   '24.9.19.(목)'     → '2024-09-19'
+//   '2024-09-19'       → '2024-09-19'
+//   '2024.09.19'       → '2024-09-19'
+//   '2024/09/19'       → '2024-09-19'
+//   '24-09-19'         → '2024-09-19'
+//   날짜 객체나 시리얼 숫자도 처리
+function normalizeSheetDate(raw) {
+  if (raw == null) return '';
+  let s = String(raw).trim();
+  if (!s) return '';
+  
+  // 요일 부분 제거: '(목)', '(월)' 등
+  s = s.replace(/\([월화수목금토일]\)/g, '').trim();
+  // 끝의 점 제거: '24.09.19.' → '24.09.19'
+  s = s.replace(/\.+$/, '').trim();
+  
+  // 구분자 통일 ('.' '/' → '-')
+  s = s.replace(/[./]/g, '-');
+  
+  // 매칭: YYYY-MM-DD 또는 YY-MM-DD
+  const m = s.match(/^(\d{2,4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return s;  // 매칭 실패 시 원본 반환
+  
+  let [_, y, mo, d] = m;
+  // 2자리 연도 → 4자리 (24 → 2024)
+  if (y.length === 2) y = '20' + y;
+  // 한 자리 월/일 → 두 자리 (9 → 09)
+  mo = mo.padStart(2, '0');
+  d = d.padStart(2, '0');
+  
+  return `${y}-${mo}-${d}`;
+}
+
 // CSV 텍스트를 2차원 배열로 파싱
 function parseCSV(text) {
   const lines = text.split(/\r?\n/);
@@ -2868,6 +2904,8 @@ function applyImport(parsed) {
     const existing = getPositions();
     const incoming = parsed.openPositions.map(p => ({
       ...p,
+      buyDate: normalizeSheetDate(p.buyDate),
+      expireDate: normalizeSheetDate(p.expireDate),
       id: 'IMP' + Date.now() + Math.random().toString(36).slice(2, 6),
       status: 'open',
     }));
@@ -2879,10 +2917,10 @@ function applyImport(parsed) {
     const existing = getHistory();
     const incoming = parsed.closedTrades.map(t => ({
       id: 'IMPH' + Date.now() + Math.random().toString(36).slice(2, 6),
-      date: t.sellDate,           // 매도된 날짜를 history 날짜로
+      date: normalizeSheetDate(t.sellDate),    // 매도일 정규화
       type: t.exitType === 'EXPIRE' ? 'SELL_EXPIRE' : 'SELL_TARGET',
       mode: t.mode,
-      buyDate: t.buyDate,
+      buyDate: normalizeSheetDate(t.buyDate),  // 매수일도 정규화
       buyPrice: t.buyPrice,
       exitPrice: t.exitPrice,
       qty: t.qty,
@@ -2890,7 +2928,7 @@ function applyImport(parsed) {
       boosted: t.boosted,
       realizedPnl: t.realizedPnl,
     }));
-    // 날짜 역순 정렬 (최신이 위)
+    // 날짜 역순 정렬 (최신이 위) - 이제 YYYY-MM-DD라 localeCompare 정확함
     incoming.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     ACC.set('history', [...incoming, ...existing]);
   }
