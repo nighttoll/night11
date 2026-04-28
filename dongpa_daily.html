@@ -43,27 +43,28 @@
   .container { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; }
   
   /* Top */
-  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-  .app-title { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; gap: 6px; }
+  .app-title { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; flex-shrink: 0; }
   .app-title .accent { color: var(--accent); }
-  .header-right { display: flex; align-items: center; gap: 8px; }
+  .header-right { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
   .today-chip {
     background: var(--surface); border: 1px solid var(--border);
-    padding: 5px 11px; border-radius: 16px;
-    font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim);
+    padding: 4px 9px; border-radius: 14px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);
+    white-space: nowrap;
   }
   
   /* Account selector */
   .account-selector { position: relative; }
   .account-btn {
     background: var(--surface); border: 1px solid var(--accent-dark);
-    color: var(--accent); padding: 5px 10px; border-radius: 16px;
-    font-family: inherit; font-size: 11px; font-weight: 600;
-    cursor: pointer; display: flex; align-items: center; gap: 4px;
-    max-width: 130px;
+    color: var(--accent); padding: 4px 8px; border-radius: 14px;
+    font-family: inherit; font-size: 10px; font-weight: 600;
+    cursor: pointer; display: flex; align-items: center; gap: 3px;
+    max-width: 90px; white-space: nowrap;
   }
   .account-btn:hover { background: var(--surface-2); border-color: var(--accent); }
-  .account-btn-arrow { font-size: 8px; opacity: 0.7; }
+  .account-btn-arrow { font-size: 7px; opacity: 0.7; }
   .account-menu {
     position: absolute; top: 100%; right: 0; margin-top: 6px;
     background: var(--surface); border: 1px solid var(--border);
@@ -491,7 +492,65 @@
     display: inline-block; background: var(--yellow); color: var(--bg);
     font-size: 10px; padding: 2px 7px; border-radius: 3px; font-weight: 700;
   }
+  
+  /* Firebase login button */
+  .login-btn {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-dim); padding: 4px 8px; border-radius: 14px;
+    font-family: inherit; font-size: 10px; font-weight: 600;
+    cursor: pointer; display: flex; align-items: center; gap: 3px;
+    white-space: nowrap;
+  }
+  .login-btn:hover { background: var(--surface-2); border-color: var(--accent-dark); color: var(--text); }
+  .login-btn.logged-in { color: var(--green); border-color: var(--green-dark); }
+  .login-btn.syncing { color: var(--yellow); }
+  .sync-indicator {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green); margin-right: 4px;
+  }
+  .sync-indicator.syncing { background: var(--yellow); animation: pulse 1s infinite; }
+  .sync-indicator.error { background: var(--red); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 </style>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+
+<!-- Firebase Configuration -->
+<!-- Firebase SDK (compat = v8 API, 단일 페이지에 적합) -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyDSNC1cd9pmyW7re_ANjxMLTHxlgUaWkrk",
+    authDomain: "dongpa-sync.firebaseapp.com",
+    projectId: "dongpa-sync",
+    storageBucket: "dongpa-sync.firebasestorage.app",
+    messagingSenderId: "1078335466166",
+    appId: "1:1078335466166:web:56c77ce8d5103ae4d25417"
+  };
+  
+  // Initialize Firebase (전역으로 노출)
+  let firebaseApp = null;
+  let firebaseAuth = null;
+  let firebaseDb = null;
+  let firebaseUser = null;  // 현재 로그인한 사용자
+  let firebaseEnabled = false;  // 초기화 성공 여부
+  
+  try {
+    firebaseApp = firebase.initializeApp(firebaseConfig);
+    firebaseAuth = firebase.auth();
+    firebaseDb = firebase.firestore();
+    firebaseEnabled = true;
+    console.log('[Firebase] 초기화 성공');
+  } catch (e) {
+    console.warn('[Firebase] 초기화 실패:', e.message);
+  }
+</script>
 </head>
 <body>
 
@@ -510,8 +569,14 @@
           <div class="account-menu-divider"></div>
           <button class="account-menu-item" id="addAccountBtn">➕ 새 계좌</button>
           <button class="account-menu-item" id="manageAccountsBtn">⚙️ 계좌 관리</button>
+          <div class="account-menu-divider"></div>
+          <button class="account-menu-item" id="syncCounterBtn">🔄 시트와 카운터 동기화</button>
         </div>
       </div>
+      <button class="login-btn" id="loginBtn" title="기기간 동기화">
+        <span id="loginBtnIcon">👤</span>
+        <span id="loginBtnLabel">로그인</span>
+      </button>
       <div class="today-chip" id="todayChip">—</div>
     </div>
   </div>
@@ -601,6 +666,19 @@
       <div class="input-row">
         <label>전고점 <span class="unit">(부스트 계산)</span></label>
         <input type="number" id="peakPrice" step="0.01" placeholder="자동 추정">
+      </div>
+      
+      <!-- 시드증액 (외부 입금) -->
+      <div class="input-row" style="margin-top: 8px; padding-top: 12px; border-top: 1px dashed var(--border-lite);">
+        <label>시드 증액 <span class="unit">(다음 갱신 적용)</span></label>
+        <div style="display: flex; gap: 6px; flex: 1;">
+          <input type="number" id="seedAddInput" step="1" placeholder="0" style="flex:1;">
+          <button id="seedAddApplyBtn" class="fetch-btn" style="padding: 8px 14px; font-size: 12px;">+ 추가</button>
+        </div>
+      </div>
+      <div id="seedAddPending" style="display:none; font-size: 11px; color: var(--yellow); padding: 6px 10px; background: rgba(212, 165, 116, 0.08); border-radius: 6px; margin-top: 6px;">
+        <span id="seedAddPendingText"></span>
+        <button id="seedAddCancelBtn" style="float:right; background:none; border:none; color:var(--red); font-size:11px; cursor:pointer; padding:0;">취소</button>
       </div>
     </div>
     
@@ -716,22 +794,22 @@
        ==================================== -->
   <div class="tab-content" id="tab-settings" style="display:none;">
     <div class="settings-section">
-      <h3>동파법 파라미터 <span style="font-size:10px; color:var(--text-faint); font-weight:400;">(시트 기준)</span></h3>
-      <div class="input-row"><label>SF 매수프리미엄 <span class="unit">(%)</span></label><input type="number" id="set_sfBuy" step="0.1" value="3.0"></div>
-      <div class="input-row"><label>SF 매도목표 <span class="unit">(%)</span></label><input type="number" id="set_sfSell" step="0.1" value="0.2"></div>
+      <h3>동파법 파라미터 <span style="font-size:10px; color:var(--text-faint); font-weight:400;">(CDB 최적값)</span></h3>
+      <div class="input-row"><label>SF 매수프리미엄 <span class="unit">(%)</span></label><input type="number" id="set_sfBuy" step="0.1" value="4.5"></div>
+      <div class="input-row"><label>SF 매도목표 <span class="unit">(%)</span></label><input type="number" id="set_sfSell" step="0.1" value="1.8"></div>
       <div class="input-row"><label>SF 분할수</label><input type="number" id="set_sfSplit" step="1" value="7"></div>
-      <div class="input-row"><label>SF 보유일수</label><input type="number" id="set_sfHold" step="1" value="30"></div>
-      <div class="input-row"><label>AG 매수프리미엄 <span class="unit">(%)</span></label><input type="number" id="set_agBuy" step="0.1" value="5.0"></div>
-      <div class="input-row"><label>AG 매도목표 <span class="unit">(%)</span></label><input type="number" id="set_agSell" step="0.1" value="2.5"></div>
-      <div class="input-row"><label>AG 분할수</label><input type="number" id="set_agSplit" step="1" value="7"></div>
+      <div class="input-row"><label>SF 보유일수</label><input type="number" id="set_sfHold" step="1" value="35"></div>
+      <div class="input-row"><label>AG 매수프리미엄 <span class="unit">(%)</span></label><input type="number" id="set_agBuy" step="0.1" value="3.6"></div>
+      <div class="input-row"><label>AG 매도목표 <span class="unit">(%)</span></label><input type="number" id="set_agSell" step="0.1" value="3.0"></div>
+      <div class="input-row"><label>AG 분할수</label><input type="number" id="set_agSplit" step="1" value="8"></div>
       <div class="input-row"><label>AG 보유일수</label><input type="number" id="set_agHold" step="1" value="7"></div>
     </div>
     
     <div class="settings-section">
       <h3>복리 설정 <span style="font-size:10px; color:var(--text-faint); font-weight:400;">(공격투자형)</span></h3>
       <div class="input-row"><label>투자금 갱신 주기 <span class="unit">(거래일)</span></label><input type="number" id="set_compCycle" step="1" value="10"></div>
-      <div class="input-row"><label>이익 복리율 <span class="unit">(%)</span></label><input type="number" id="set_profRate" step="1" value="80"></div>
-      <div class="input-row"><label>손실 복리율 <span class="unit">(%)</span></label><input type="number" id="set_lossRate" step="1" value="30"></div>
+      <div class="input-row"><label>이익 복리율 <span class="unit">(%)</span></label><input type="number" id="set_profRate" step="1" value="72"></div>
+      <div class="input-row"><label>손실 복리율 <span class="unit">(%)</span></label><input type="number" id="set_lossRate" step="0.1" value="21.3"></div>
       <div style="font-size: 11px; color: var(--text-faint); line-height: 1.5; margin-top: 8px;">
         10거래일마다 최근 10일 실현손익 × 복리율만큼 투자금(IA) 자동 갱신
       </div>
@@ -755,6 +833,33 @@
       <div class="input-row" style="margin-top:10px;">
         <label>지난주 모드 <span class="unit">(16주차)</span></label>
         <select id="prevWeekModeSelect"><option value="SF">SF</option><option value="AG">AG</option></select>
+      </div>
+    </div>
+    
+    <div class="settings-section">
+      <h3>📈 IA 복리 갱신 <span style="font-size:10px; color:var(--text-faint); font-weight:400;">(수동)</span></h3>
+      <div style="font-size: 12px; color: var(--text-dim); line-height: 1.6; margin-bottom: 12px;">
+        시트와 동일한 시점에 IA를 갱신하려면 시트 갱신 후 이 버튼을 누르세요.<br>
+        <span style="color:var(--text-faint); font-size:11px;">자동 갱신 안 함 (시트와 어긋나는 것 방지)</span>
+      </div>
+      
+      <div id="iaRenewalStatus" style="background: var(--bg); border: 1px solid var(--border-lite); border-radius: 8px; padding: 12px; margin-bottom: 10px; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.8;">
+        <div style="color: var(--text-dim);">현재 IA: <strong style="color: var(--text);" id="iaStatus_current">$0</strong></div>
+        <div style="color: var(--text-dim);">마지막 갱신: <strong style="color: var(--text);" id="iaStatus_lastDate">없음</strong></div>
+        <div style="color: var(--text-dim);">갱신 후 손익: <strong id="iaStatus_pnl">$0</strong> <span style="color: var(--text-faint); font-size: 11px;" id="iaStatus_pnlCount"></span></div>
+      </div>
+      
+      <div class="input-row">
+        <label>시드증액 <span class="unit">(외부 입금, 옵션)</span></label>
+        <input type="number" id="ia_seedAdd" step="1" value="0" placeholder="0">
+      </div>
+      
+      <button class="fetch-btn" id="iaRenewBtn" style="width: 100%; padding: 11px; font-size: 13px; margin-top: 10px;">
+        📈 IA 갱신 미리보기
+      </button>
+      
+      <div id="iaRenewPreview" style="display:none; margin-top: 12px; padding: 12px; background: rgba(212, 165, 116, 0.06); border: 1px solid var(--accent-dark); border-radius: 8px;">
+        <!-- 미리보기 내용 동적 표시 -->
       </div>
     </div>
     
@@ -916,6 +1021,234 @@ function daysBetween(d1Str, d2Str) {
   const d1 = parseDate(d1Str), d2 = parseDate(d2Str);
   return Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
 }
+
+// 두 날짜 사이의 거래일 수 (시작일 제외, 종료일 포함)
+// 예: tradingDaysBetween('2026-04-20', '2026-04-24') = 4 (월 화 수 목 금 중 화수목금)
+function tradingDaysBetween(fromStr, toStr) {
+  if (!fromStr || !toStr) return 0;
+  if (fromStr >= toStr) return 0;
+  
+  let count = 0;
+  let d = parseDate(fromStr);
+  const target = parseDate(toStr);
+  
+  while (d < target) {
+    d.setDate(d.getDate() + 1);
+    if (isTradingDay(d)) count++;
+  }
+  return count;
+}
+
+// ====================================================
+// 복리 카운터 (10거래일 단위 자동 갱신)
+// ====================================================
+
+// 카운터 데이터 가져오기
+function getCompoundCounter() {
+  const cycle = parseInt(document.getElementById('set_compCycle')?.value) || 10;
+  return ACC.get('compoundCounter', { 
+    count: 0, 
+    cycle: cycle,
+    lastUpdated: null  // 마지막 카운터 갱신 거래일
+  });
+}
+
+// 카운터 자동 증가 + 10거래일 도달 시 IA 자동 갱신
+// 반환값: { count, cycle, didUpdate, oldIA, newIA, bfs }
+function updateCompoundCounter() {
+  const data = getCompoundCounter();
+  const today = fmtDate(new Date());
+  const cycle = parseInt(document.getElementById('set_compCycle')?.value) || data.cycle || 10;
+  data.cycle = cycle;
+  
+  let didUpdate = false;
+  let oldIA = parseFloat(document.getElementById('ia')?.value) || 0;
+  let newIA = oldIA;
+  let bfsCalc = null;
+  
+  if (!data.lastUpdated) {
+    // 첫 실행: 오늘로 초기화 (카운터 0 유지)
+    data.lastUpdated = today;
+    ACC.set('compoundCounter', data);
+    return { count: data.count, cycle, didUpdate: false, oldIA, newIA: oldIA };
+  }
+  
+  // 마지막 갱신일부터 오늘까지 거래일 수
+  const elapsed = tradingDaysBetween(data.lastUpdated, today);
+  
+  if (elapsed === 0) {
+    // 같은 거래일 내 → 변화 없음
+    return { count: data.count, cycle, didUpdate: false, oldIA, newIA: oldIA };
+  }
+  
+  // 카운터 증가
+  data.count += elapsed;
+  data.lastUpdated = today;
+  
+  // 갱신 주기 도달 시 IA 자동 갱신
+  while (data.count >= cycle) {
+    data.count -= cycle;
+    
+    // BFS 계산 (최근 N거래일 실현손익 합)
+    const recent = ACC.get('recent10Pnl', []);
+    const bfs = recent.reduce((s, n) => s + n, 0);
+    
+    // 복리율 적용
+    const profRate = (parseFloat(document.getElementById('set_profRate')?.value) || 80) / 100;
+    const lossRate = (parseFloat(document.getElementById('set_lossRate')?.value) || 30) / 100;
+    const adjustedBfs = bfs >= 0 ? bfs * profRate : bfs * lossRate;
+    
+    // 시드증액 (외부입금) - 누적된 것 모두 적용 후 리셋
+    const seedAdd = ACC.get('pendingSeedAdd', 0);
+    
+    // IA 갱신
+    newIA = oldIA + Math.round(adjustedBfs * 100) / 100 + seedAdd;
+    
+    // 시트와 일치하도록 정수로 (시트 ROUND 0)
+    newIA = Math.round(newIA);
+    
+    // 기록 저장
+    addHistory({
+      id: 'COMP' + Date.now(),
+      date: today,
+      type: 'COMPOUND_UPDATE',
+      mode: '-',
+      oldIA: oldIA,
+      newIA: newIA,
+      bfs: bfs,
+      adjustedBfs: Math.round(adjustedBfs * 100) / 100,
+      seedAdd: seedAdd,
+      cycle: cycle,
+    });
+    
+    bfsCalc = { bfs, adjustedBfs, seedAdd, oldIA, newIA };
+    didUpdate = true;
+    oldIA = newIA;  // 다음 루프를 위해
+    
+    ACC.set('pendingSeedAdd', 0);  // 시드증액 리셋
+  }
+  
+  ACC.set('compoundCounter', data);
+  
+  // IA 입력 필드 갱신
+  if (didUpdate) {
+    const iaInput = document.getElementById('ia');
+    if (iaInput) {
+      iaInput.value = newIA;
+      saveFormState();
+    }
+  }
+  
+  return { 
+    count: data.count, 
+    cycle, 
+    didUpdate, 
+    oldIA: bfsCalc?.oldIA, 
+    newIA, 
+    bfs: bfsCalc?.bfs,
+    adjustedBfs: bfsCalc?.adjustedBfs,
+    seedAdd: bfsCalc?.seedAdd
+  };
+}
+
+// 시트와 카운터 동기화 (AH열 분석)
+async function syncCounterFromSheet() {
+  const url = ACC.get('lastSheetUrl', '') || prompt(
+    '시트 URL을 입력하세요\n(이전 이식과 동일한 URL):',
+    ''
+  );
+  if (!url) return;
+  
+  ACC.set('lastSheetUrl', url);
+  
+  // 시트 다운로드 (병렬 시도)
+  const proxies = [
+    { name: '직접', fn: (u) => u },
+    { name: 'corsproxy', fn: (u) => 'https://corsproxy.io/?' + encodeURIComponent(u) },
+    { name: 'allorigins', fn: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
+  ];
+  
+  const tryFetch = async (u) => {
+    try {
+      const res = await fetch(u, { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) return null;
+      const t = await res.text();
+      if (t.length < 50 || t.trim().toLowerCase().startsWith('<')) return null;
+      return t;
+    } catch (e) { return null; }
+  };
+  
+  let text = null;
+  // URL 형태에 따라 1~2개 시도
+  let csvUrls = [url];
+  if (!url.includes('output=csv')) {
+    const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (m) csvUrls = [`https://docs.google.com/spreadsheets/d/${m[1]}/gviz/tq?tqx=out:csv&sheet=RECORD`];
+  }
+  
+  outer:
+  for (const csvUrl of csvUrls) {
+    const results = await Promise.allSettled(proxies.map(p => tryFetch(p.fn(csvUrl))));
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value) { text = r.value; break outer; }
+    }
+  }
+  
+  if (!text) {
+    alert('❌ 시트 다운로드 실패\n\n시트 URL 또는 공유 설정을 확인해주세요.');
+    return;
+  }
+  
+  // CSV 파싱 + AH열 분석
+  const rows = parseCSV(text);
+  const colAH = 33; // A=0, ..., AH=33
+  
+  // 마지막 TRUE 이후 거래일 수 카운트
+  // 데이터 행은 보통 인덱스 3부터 (헤더 3줄)
+  let counterFromSheet = 0;
+  let foundLastTrue = false;
+  
+  for (let i = rows.length - 1; i >= 3; i--) {
+    const row = rows[i];
+    if (!row || row.length < 34) continue;
+    
+    const ahRaw = (row[colAH] || '').toString().trim().toUpperCase();
+    
+    // 빈 값은 데이터 없는 행으로 간주 → 스킵
+    if (!ahRaw) continue;
+    
+    if (ahRaw === 'TRUE') {
+      foundLastTrue = true;
+      break;
+    } else if (ahRaw === 'FALSE') {
+      counterFromSheet++;
+    }
+  }
+  
+  if (!foundLastTrue) {
+    if (!confirm(
+      `⚠️ 시트에서 갱신여부 TRUE를 찾지 못했어요.\n\n` +
+      `데이터 행 ${rows.length - 3}개 검사 후 발견 못함.\n` +
+      `현재 카운터(${counterFromSheet})로 그대로 적용할까요?`
+    )) return;
+  }
+  
+  const cycle = parseInt(document.getElementById('set_compCycle')?.value) || 10;
+  const finalCount = Math.min(counterFromSheet, cycle - 1);
+  
+  // 카운터 강제 세팅
+  const data = getCompoundCounter();
+  data.count = finalCount;
+  data.lastUpdated = fmtDate(new Date());
+  ACC.set('compoundCounter', data);
+  
+  alert(
+    `✓ 동기화 완료\n\n` +
+    `현재 카운터: ${finalCount}/${cycle}\n` +
+    `다음 갱신까지: ${cycle - finalCount}거래일`
+  );
+  renderAll();
+}
 const DAY_NAMES = ['일','월','화','수','목','금','토'];
 function formatDateKorean(d) {
   return `${fmtDate(d)} (${DAY_NAMES[d.getDay()]})`;
@@ -1033,6 +1366,387 @@ function switchAccount(accountId) {
 
 // 마이그레이션 즉시 실행 (스크립트 로드 시)
 migrateToMultiAccount();
+
+// ====================================================
+// Firebase 자동 동기화
+// ====================================================
+
+// 동기화 상태 관리
+const SYNC_STATE = {
+  enabled: false,           // 사용자가 로그인했는가
+  syncing: false,           // 현재 동기화 중인가
+  lastSyncedAt: null,       // 마지막 동기화 시각
+  pendingChanges: false,    // 저장 안 된 변경사항이 있는가
+  unsubscribe: null,        // Firestore 실시간 리스너
+};
+
+// 사용자 데이터 경로
+function getUserDocRef() {
+  if (!firebaseUser || !firebaseDb) return null;
+  return firebaseDb.collection('users').doc(firebaseUser.uid);
+}
+
+// 모든 LocalStorage 데이터를 Firestore에 업로드
+async function uploadAllDataToFirebase() {
+  if (!firebaseUser || !firebaseDb) {
+    console.warn('[sync] Firebase 미준비');
+    return false;
+  }
+  
+  setSyncStatus('syncing');
+  
+  try {
+    // localStorage의 모든 dongpa_* 키 수집
+    const data = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('dongpa_')) {
+        // Firestore는 / 등 특수문자 제한 있음, key를 안전하게 인코딩
+        const safeKey = key.replace(/dongpa_/, '').replace(/[\.\$\#\[\]\/]/g, '_');
+        data[safeKey] = localStorage.getItem(key);
+      }
+    }
+    
+    const ref = getUserDocRef();
+    await ref.set({
+      data: data,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      device: getDeviceLabel(),
+    }, { merge: true });
+    
+    SYNC_STATE.lastSyncedAt = new Date();
+    SYNC_STATE.pendingChanges = false;
+    setSyncStatus('synced');
+    console.log('[sync] 업로드 완료:', Object.keys(data).length, '개 키');
+    return true;
+  } catch (e) {
+    console.error('[sync] 업로드 실패:', e);
+    setSyncStatus('error', e.message);
+    return false;
+  }
+}
+
+// Firestore에서 모든 데이터를 다운로드해서 LocalStorage에 적용
+async function downloadAllDataFromFirebase() {
+  if (!firebaseUser || !firebaseDb) return false;
+  
+  setSyncStatus('syncing');
+  
+  try {
+    const ref = getUserDocRef();
+    const doc = await ref.get();
+    
+    if (!doc.exists || !doc.data().data) {
+      console.log('[sync] 클라우드에 데이터 없음 (첫 로그인)');
+      // 데이터 없으면 현재 로컬 데이터를 업로드
+      setSyncStatus('synced');
+      return await uploadAllDataToFirebase();
+    }
+    
+    const cloudData = doc.data().data;
+    let appliedCount = 0;
+    
+    // LocalStorage의 dongpa_* 키 모두 지우고 새로 입력
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('dongpa_')) keysToRemove.push(key);
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    
+    // 클라우드 데이터 적용
+    for (const [safeKey, value] of Object.entries(cloudData)) {
+      const originalKey = 'dongpa_' + safeKey;
+      localStorage.setItem(originalKey, value);
+      appliedCount++;
+    }
+    
+    SYNC_STATE.lastSyncedAt = doc.data().updatedAt?.toDate?.() || new Date();
+    setSyncStatus('synced');
+    console.log('[sync] 다운로드 완료:', appliedCount, '개 키');
+    return true;
+  } catch (e) {
+    console.error('[sync] 다운로드 실패:', e);
+    setSyncStatus('error', e.message);
+    return false;
+  }
+}
+
+// 실시간 리스너 시작 (다른 기기 변경사항 자동 감지)
+function startRealtimeSync() {
+  if (!firebaseUser || !firebaseDb) return;
+  
+  // 이미 리스너 있으면 정리
+  if (SYNC_STATE.unsubscribe) SYNC_STATE.unsubscribe();
+  
+  const ref = getUserDocRef();
+  let isFirstSnapshot = true;
+  
+  SYNC_STATE.unsubscribe = ref.onSnapshot(
+    { includeMetadataChanges: true },
+    (doc) => {
+      // 첫 스냅샷은 무시 (이미 다운로드함)
+      if (isFirstSnapshot) {
+        isFirstSnapshot = false;
+        return;
+      }
+      
+      // 본인이 직접 쓴 변경은 무시 (무한루프 방지)
+      if (doc.metadata.hasPendingWrites) return;
+      
+      // 다른 기기에서 변경됨 → 다운로드
+      console.log('[sync] 다른 기기에서 변경 감지');
+      downloadAllDataFromFirebase().then(() => {
+        // 적용 후 화면 갱신
+        if (typeof renderAll === 'function') renderAll();
+        if (typeof renderAccountSelector === 'function') renderAccountSelector();
+      });
+    },
+    (err) => {
+      console.error('[sync] 리스너 오류:', err);
+      setSyncStatus('error', err.message);
+    }
+  );
+}
+
+// 디바운스된 업로드 (변경사항 발생 시 자동 호출)
+let uploadDebounceTimer = null;
+function scheduleUpload() {
+  if (!SYNC_STATE.enabled) return;
+  
+  SYNC_STATE.pendingChanges = true;
+  setSyncStatus('pending');
+  
+  if (uploadDebounceTimer) clearTimeout(uploadDebounceTimer);
+  uploadDebounceTimer = setTimeout(() => {
+    uploadAllDataToFirebase();
+  }, 1500);  // 1.5초 동안 변경 없으면 업로드
+}
+
+// LocalStorage setItem을 가로채서 자동 업로드 트리거
+const _origSetItem = localStorage.setItem.bind(localStorage);
+const _origRemoveItem = localStorage.removeItem.bind(localStorage);
+
+localStorage.setItem = function(key, value) {
+  _origSetItem(key, value);
+  if (key.startsWith('dongpa_')) scheduleUpload();
+};
+localStorage.removeItem = function(key) {
+  _origRemoveItem(key);
+  if (key.startsWith('dongpa_')) scheduleUpload();
+};
+
+// 디바이스 라벨 (어디서 마지막에 수정했는지 식별)
+function getDeviceLabel() {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad/i.test(ua)) return 'iPhone';
+  if (/Android/i.test(ua)) return 'Android';
+  if (/Mac/i.test(ua)) return 'Mac';
+  if (/Windows/i.test(ua)) return 'Windows';
+  return 'Unknown';
+}
+
+// 동기화 상태 표시 갱신
+function setSyncStatus(status, errorMsg = null) {
+  SYNC_STATE.syncing = (status === 'syncing');
+  
+  const btn = document.getElementById('loginBtn');
+  const label = document.getElementById('loginBtnLabel');
+  if (!btn || !label) return;
+  
+  if (!SYNC_STATE.enabled) {
+    btn.classList.remove('logged-in', 'syncing');
+    label.textContent = '로그인';
+    return;
+  }
+  
+  btn.classList.add('logged-in');
+  const userName = firebaseUser?.displayName?.split(' ')[0] || '사용자';
+  
+  if (status === 'syncing') {
+    btn.classList.add('syncing');
+    label.innerHTML = `<span class="sync-indicator syncing"></span>${userName}`;
+  } else if (status === 'pending') {
+    btn.classList.add('syncing');
+    label.innerHTML = `<span class="sync-indicator syncing"></span>${userName}`;
+  } else if (status === 'error') {
+    btn.classList.remove('syncing');
+    label.innerHTML = `<span class="sync-indicator error"></span>${userName}`;
+    btn.title = '동기화 오류: ' + (errorMsg || 'Unknown');
+  } else {  // synced
+    btn.classList.remove('syncing');
+    label.innerHTML = `<span class="sync-indicator"></span>${userName}`;
+    btn.title = `동기화 완료: ${SYNC_STATE.lastSyncedAt?.toLocaleTimeString() || '-'}`;
+  }
+}
+
+// 로그인
+async function loginWithGoogle() {
+  if (!firebaseEnabled) {
+    alert('Firebase가 초기화되지 않았습니다.\n네트워크 또는 SDK 로드 실패.');
+    return;
+  }
+  
+  try {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    const result = await firebaseAuth.signInWithPopup(provider);
+    firebaseUser = result.user;
+    SYNC_STATE.enabled = true;
+    
+    console.log('[auth] 로그인 성공:', firebaseUser.email);
+    
+    // 처음 로그인 시: 클라우드와 로컬 비교 후 결정
+    const ref = getUserDocRef();
+    const doc = await ref.get();
+    
+    let action = 'upload';
+    if (doc.exists && doc.data().data) {
+      const cloudKeys = Object.keys(doc.data().data).length;
+      const localKeys = (() => {
+        let n = 0;
+        for (let i = 0; i < localStorage.length; i++) {
+          if (localStorage.key(i)?.startsWith('dongpa_')) n++;
+        }
+        return n;
+      })();
+      
+      const updatedAt = doc.data().updatedAt?.toDate?.();
+      const device = doc.data().device || '?';
+      const timeStr = updatedAt ? updatedAt.toLocaleString() : '-';
+      
+      // 자동 클라우드 우선 (사용자 결정 사항)
+      // - 다른 기기에서 이미 사용한 데이터 기준
+      // - 로컬에 데이터가 있어도 클라우드로 덮어씀
+      action = 'download';
+      
+      console.log(
+        `[auth] 클라우드 데이터 발견 → 자동 download\n` +
+        `  클라우드: ${cloudKeys}개 키 (${device}, ${timeStr})\n` +
+        `  로컬: ${localKeys}개 키 (덮어씀)`
+      );
+    }
+    
+    if (action === 'download') {
+      await downloadAllDataFromFirebase();
+      // 데이터 적용 후 화면 갱신
+      location.reload();
+    } else {
+      await uploadAllDataToFirebase();
+    }
+    
+    // 실시간 리스너 시작
+    startRealtimeSync();
+    
+    setSyncStatus('synced');
+    
+  } catch (e) {
+    console.error('[auth] 로그인 실패:', e);
+    if (e.code === 'auth/popup-closed-by-user') {
+      // 사용자 취소 - 알림 안 함
+    } else if (e.code === 'auth/unauthorized-domain') {
+      alert(
+        '⚠️ 도메인 승인 필요\n\n' +
+        'Firebase 콘솔 → Authentication → Settings → 승인된 도메인에\n' +
+        '현재 도메인을 추가해주세요:\n' +
+        location.hostname
+      );
+    } else {
+      alert('로그인 실패: ' + e.message);
+    }
+  }
+}
+
+// 로그아웃
+async function logoutFromFirebase() {
+  if (!confirm(
+    '로그아웃하시겠습니까?\n\n' +
+    '데이터는 이 기기에 그대로 남고, 동기화만 중지됩니다.\n' +
+    '클라우드 데이터는 삭제되지 않습니다.'
+  )) return;
+  
+  try {
+    if (SYNC_STATE.unsubscribe) {
+      SYNC_STATE.unsubscribe();
+      SYNC_STATE.unsubscribe = null;
+    }
+    await firebaseAuth.signOut();
+    firebaseUser = null;
+    SYNC_STATE.enabled = false;
+    setSyncStatus('logged-out');
+    alert('✓ 로그아웃 완료');
+  } catch (e) {
+    console.error('[auth] 로그아웃 실패:', e);
+    alert('로그아웃 실패: ' + e.message);
+  }
+}
+
+// 로그인 버튼 클릭
+function onLoginBtnClick() {
+  if (SYNC_STATE.enabled) {
+    // 이미 로그인 중 → 메뉴 표시
+    const choice = prompt(
+      `✓ ${firebaseUser?.email}\n\n` +
+      `옵션을 선택하세요:\n` +
+      `  '1' → 지금 동기화 (수동)\n` +
+      `  '2' → 로그아웃\n` +
+      `  '3' → 취소`,
+      '1'
+    );
+    if (choice === '1') uploadAllDataToFirebase();
+    else if (choice === '2') logoutFromFirebase();
+  } else {
+    loginWithGoogle();
+  }
+}
+
+// 앱 시작 시 자동 로그인 복원
+function initFirebaseAuth() {
+  if (!firebaseEnabled) {
+    console.log('[Firebase] 비활성화');
+    setSyncStatus('logged-out');
+    return;
+  }
+  
+  firebaseAuth.onAuthStateChanged(async (user) => {
+    if (user) {
+      // 자동 로그인 (이미 로그인된 상태)
+      firebaseUser = user;
+      SYNC_STATE.enabled = true;
+      console.log('[auth] 자동 로그인:', user.email);
+      
+      // 클라우드에서 최신 데이터 다운로드 (기기 변경 가능성)
+      const ref = getUserDocRef();
+      const doc = await ref.get();
+      
+      if (doc.exists && doc.data().data) {
+        // 마지막 동기화 시각 확인
+        const updatedAt = doc.data().updatedAt?.toDate?.();
+        const device = doc.data().device || '?';
+        
+        if (device !== getDeviceLabel()) {
+          // 다른 기기에서 마지막 수정 → 다운로드 권유
+          if (confirm(
+            `☁️ 클라우드에 ${device}에서 수정된 데이터가 있습니다.\n` +
+            `(${updatedAt?.toLocaleString() || '-'})\n\n` +
+            `다운로드해서 적용할까요?`
+          )) {
+            await downloadAllDataFromFirebase();
+            location.reload();
+            return;
+          }
+        }
+      }
+      
+      // 실시간 리스너 시작
+      startRealtimeSync();
+      setSyncStatus('synced');
+    } else {
+      firebaseUser = null;
+      SYNC_STATE.enabled = false;
+      setSyncStatus('logged-out');
+    }
+  });
+}
 
 function estimatePeak() {
   let peak = 0;
@@ -1309,6 +2023,20 @@ async function autoProcessDay() {
   document.getElementById('prevClose').value = closePrice.toFixed(2);
   saveFormState();
   
+  // 4-2. 오늘 실현손익 → recent10Pnl에 추가 (복리 계산용)
+  const todayRealized = [...results.sellTarget, ...results.sellExpired]
+    .reduce((s, x) => s + x.pnl, 0);
+  // 매도 없는 날도 0으로 추가 (BFS 10건 채우기 위함)
+  const recent = ACC.get('recent10Pnl', []);
+  recent.push(Math.round(todayRealized * 100) / 100);
+  // 최근 N개만 유지 (cycle만큼)
+  const cycle = parseInt(document.getElementById('set_compCycle')?.value) || 10;
+  while (recent.length > cycle) recent.shift();
+  ACC.set('recent10Pnl', recent);
+  
+  // 4-3. 복리 카운터 업데이트 (+ 도달 시 IA 자동 갱신)
+  const compResult = updateCompoundCounter();
+  
   // 5. 결과 요약
   const total = results.buyFilled.length + results.buySkipped.length + results.sellTarget.length + results.sellExpired.length;
   const totalPnl = [...results.sellTarget, ...results.sellExpired].reduce((s, x) => s + x.pnl, 0);
@@ -1316,7 +2044,7 @@ async function autoProcessDay() {
   let msg = `✓ 자동 처리 완료\n\nSOXL 종가: $${closePrice.toFixed(2)} (${priceSource})\n\n`;
   
   if (total === 0) {
-    msg += '처리할 내역 없음';
+    msg += '처리할 내역 없음\n';
   } else {
     if (results.buyFilled.length > 0) {
       msg += `🟢 매수 체결 ${results.buyFilled.length}건:\n`;
@@ -1347,8 +2075,21 @@ async function autoProcessDay() {
       msg += '\n';
     }
     if (results.sellTarget.length + results.sellExpired.length > 0) {
-      msg += `\n총 실현손익: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
+      msg += `\n총 실현손익: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}\n`;
     }
+  }
+  
+  // 복리 카운터 표시
+  msg += `\n━━━━━━━━━━━━━\n`;
+  msg += `📊 복리 카운터: ${compResult.count}/${compResult.cycle}거래일\n`;
+  if (compResult.didUpdate) {
+    msg += `\n🔄 IA 자동 갱신!\n`;
+    msg += `  BFS: ${compResult.bfs >= 0 ? '+' : ''}$${compResult.bfs.toFixed(2)}\n`;
+    msg += `  복리적용: ${compResult.adjustedBfs >= 0 ? '+' : ''}$${compResult.adjustedBfs.toFixed(2)}\n`;
+    if (compResult.seedAdd && compResult.seedAdd !== 0) {
+      msg += `  시드증액: ${compResult.seedAdd >= 0 ? '+' : ''}$${compResult.seedAdd.toFixed(2)}\n`;
+    }
+    msg += `  IA: $${compResult.oldIA?.toLocaleString()} → $${compResult.newIA?.toLocaleString()}\n`;
   }
   
   btn.classList.add('success');
@@ -1668,7 +2409,9 @@ function renderOrder(o) {
     : (o.boosterOn === 'candidate' ? '<span class="tag" style="background:var(--yellow);">후보</span>' : '');
   
   const orderCmd = `SOXL LOC 매수 ${o.estQty}주 @ $${o.bidPrice}`;
-  const premiumPct = o.mode === 'AG' ? '5.0%' : '3.0%';
+  const sfBuyPct = parseFloat(document.getElementById('set_sfBuy').value);
+  const agBuyPct = parseFloat(document.getElementById('set_agBuy').value);
+  const premiumPct = (o.mode === 'AG' ? agBuyPct : sfBuyPct).toFixed(1) + '%';
   
   let warningHtml = '';
   if (o.shortage > 0) {
@@ -2084,7 +2827,7 @@ function renderSells() {
           <div>
             <div class="order-label">목표가</div>
             <div class="order-value big sell">$${p.sellTarget.toFixed(2)}</div>
-            <div class="order-sub">매수가 $${p.buyPrice.toFixed(2)} × ${p.mode === 'SF' ? '1.002' : '1.025'}</div>
+            <div class="order-sub">매수가 $${p.buyPrice.toFixed(2)} × ${(1 + (p.mode === 'SF' ? parseFloat(document.getElementById('set_sfSell').value) : parseFloat(document.getElementById('set_agSell').value))/100).toFixed(3)}</div>
           </div>
           <div>
             <div class="order-label">수량</div>
@@ -2469,6 +3212,7 @@ function renderAll() {
   renderPositions();
   renderSells();
   renderHistory();
+  renderPendingSeedAdd();
   updateAutoModeHint();
 }
 
@@ -3094,6 +3838,51 @@ document.getElementById('manageAccountsBtn').addEventListener('click', () => {
   document.getElementById('accountMenu').style.display = 'none';
 });
 
+// 시트와 카운터 동기화 (강제 적용)
+document.getElementById('syncCounterBtn').addEventListener('click', async () => {
+  document.getElementById('accountMenu').style.display = 'none';
+  await syncCounterFromSheet();
+});
+
+// 시드증액 (외부 입금) 처리
+function renderPendingSeedAdd() {
+  const pending = ACC.get('pendingSeedAdd', 0);
+  const el = document.getElementById('seedAddPending');
+  const text = document.getElementById('seedAddPendingText');
+  if (pending && pending !== 0) {
+    el.style.display = 'block';
+    text.textContent = `대기 중: ${pending >= 0 ? '+' : ''}$${pending.toLocaleString()} (다음 IA 갱신 시 반영)`;
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+document.getElementById('seedAddApplyBtn').addEventListener('click', () => {
+  const input = document.getElementById('seedAddInput');
+  const val = parseFloat(input.value);
+  if (!val || isNaN(val)) {
+    alert('금액을 입력해주세요 (음수도 가능)');
+    return;
+  }
+  const current = ACC.get('pendingSeedAdd', 0);
+  const newVal = current + val;
+  ACC.set('pendingSeedAdd', newVal);
+  input.value = '';
+  alert(
+    `✓ 시드증액 등록\n\n` +
+    `이번 추가: ${val >= 0 ? '+' : ''}$${val.toLocaleString()}\n` +
+    `누적 대기: ${newVal >= 0 ? '+' : ''}$${newVal.toLocaleString()}\n\n` +
+    `다음 IA 갱신 시 자동으로 반영됩니다`
+  );
+  renderPendingSeedAdd();
+});
+
+document.getElementById('seedAddCancelBtn').addEventListener('click', () => {
+  if (!confirm('대기 중인 시드증액을 취소할까요?')) return;
+  ACC.set('pendingSeedAdd', 0);
+  renderPendingSeedAdd();
+});
+
 // ====================================================
 // 초기화
 // ====================================================
@@ -3102,6 +3891,15 @@ document.getElementById('manageAccountsBtn').addEventListener('click', () => {
   
   // 계좌 셀렉터 초기 렌더
   renderAccountSelector();
+  
+  // Firebase 로그인 버튼 이벤트
+  const loginBtn = document.getElementById('loginBtn');
+  if (loginBtn) {
+    loginBtn.addEventListener('click', onLoginBtnClick);
+  }
+  
+  // Firebase 자동 로그인 시도 (이전에 로그인했다면 복원)
+  initFirebaseAuth();
   
   const today = new Date();
   const todayStr = fmtDate(today);
