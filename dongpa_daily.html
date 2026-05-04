@@ -3577,15 +3577,12 @@ function extractSheetId(url) {
 //   '2024/09/19'       → '2024-09-19'
 //   '24-09-19'         → '2024-09-19'
 //   날짜 객체나 시리얼 숫자도 처리
-function normalizeSheetDate(raw) {
+function normalizeSheetDate(raw, buyDateForRef) {
   if (raw == null) return '';
   let s = String(raw).trim();
   if (!s) return '';
   
   // 1. 요일 제거: 모든 형식
-  //    '(목)', '(월요일)' (괄호 + 요일)
-  //    '-수', '.목', ' 화' (구분자 + 요일 한 글자)
-  //    '월요일', '화요일' (요일 풀네임)
   s = s.replace(/\([월화수목금토일](?:요일)?\)/g, '');  // 괄호 형식
   s = s.replace(/[-./\s]?[월화수목금토일](?:요일)?$/, ''); // 끝의 요일
   s = s.replace(/^[월화수목금토일](?:요일)?[-./\s]?/, ''); // 시작의 요일
@@ -3614,13 +3611,27 @@ function normalizeSheetDate(raw) {
     return `${y}-${mo}-${d}`;
   }
   
-  // 6. MM-DD 만 있는 경우 (해 없음): 현재 연도 가정
+  // 6. MM-DD 만 있는 경우 (연도 없음)
   m = s.match(/^(\d{1,2})-(\d{1,2})$/);
   if (m) {
     let [_, mo, d] = m;
-    const y = String(new Date().getFullYear());
     mo = mo.padStart(2, '0');
     d = d.padStart(2, '0');
+    
+    // 매수일 참조가 있으면 그 연도 기반으로 추정
+    if (buyDateForRef && /^\d{4}-\d{2}-\d{2}$/.test(buyDateForRef)) {
+      const buyYear = parseInt(buyDateForRef.slice(0, 4));
+      const buyMonth = parseInt(buyDateForRef.slice(5, 7));
+      const sellMonth = parseInt(mo);
+      
+      // 매도월 >= 매수월 → 같은 해
+      // 매도월 < 매수월 → 다음 해 (해 넘김)
+      const year = sellMonth >= buyMonth ? buyYear : buyYear + 1;
+      return `${year}-${mo}-${d}`;
+    }
+    
+    // 참조 없으면 현재 연도 (이전 동작 유지)
+    const y = String(new Date().getFullYear());
     return `${y}-${mo}-${d}`;
   }
   
@@ -4025,20 +4036,27 @@ function applyImport(parsed) {
   // 과거 청산 거래 → history에 추가
   if (parsed.closedTrades && parsed.closedTrades.length > 0) {
     const existing = getHistory();
-    const incoming = parsed.closedTrades.map(t => ({
-      id: 'IMPH' + Date.now() + Math.random().toString(36).slice(2, 6),
-      date: normalizeSheetDate(t.sellDate),    // 매도일 정규화
-      type: t.exitType === 'EXPIRE' ? 'SELL_EXPIRE' : 'SELL_TARGET',
-      mode: t.mode,
-      buyDate: normalizeSheetDate(t.buyDate),  // 매수일도 정규화
-      buyPrice: t.buyPrice,
-      exitPrice: t.exitPrice,
-      qty: t.qty,
-      sellTarget: t.sellTarget,
-      boosted: t.boosted,
-      realizedPnl: t.realizedPnl,
-    }));
-    // 날짜 역순 정렬 (최신이 위) - 이제 YYYY-MM-DD라 localeCompare 정확함
+    const incoming = parsed.closedTrades.map(t => {
+      // 매수일 먼저 정규화 (보통 연도 있는 정상 형식)
+      const buyDate = normalizeSheetDate(t.buyDate);
+      // 매도일 정규화 시 매수일 참조 (연도 없으면 매수일 기준 추정)
+      const sellDate = normalizeSheetDate(t.sellDate, buyDate);
+      
+      return {
+        id: 'IMPH' + Date.now() + Math.random().toString(36).slice(2, 6),
+        date: sellDate,
+        type: t.exitType === 'EXPIRE' ? 'SELL_EXPIRE' : 'SELL_TARGET',
+        mode: t.mode,
+        buyDate: buyDate,
+        buyPrice: t.buyPrice,
+        exitPrice: t.exitPrice,
+        qty: t.qty,
+        sellTarget: t.sellTarget,
+        boosted: t.boosted,
+        realizedPnl: t.realizedPnl,
+      };
+    });
+    // 날짜 역순 정렬 (최신이 위)
     incoming.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     ACC.set('history', [...incoming, ...existing]);
   }
@@ -4850,7 +4868,7 @@ document.getElementById('seedAddCancelBtn').addEventListener('click', () => {
 // (한 번만 실행되도록 표시 키 사용)
 function normalizeAllAccountDates() {
   const VERSION_KEY = 'dongpa_dateNormVersion';
-  const CURRENT_VERSION = '3';  // 비표준 형식 강제 보정
+  const CURRENT_VERSION = '5';  // 매수월 비교로 매도년도 추정
   
   if (STORE.get('dateNormVersion', '0') === CURRENT_VERSION) {
     return; // 이미 보정됨
@@ -4859,26 +4877,33 @@ function normalizeAllAccountDates() {
   const accounts = STORE.get('accounts', []);
   let totalFixed = 0;
   let totalSkipped = 0;
+  let totalEstimated = 0;
   
   // 보조 함수: 비표준 날짜를 안전하게 보정
-  // 표준 형식이 아니면 → null 반환 (덮어쓰지 않음)
   function safeNormalize(raw) {
     if (!raw) return null;
     const s = String(raw).trim();
     if (!s) return null;
-    
-    // 이미 표준 형식이면 그대로
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    
-    // 정규화 시도
     const norm = normalizeSheetDate(s);
-    
-    // 표준 형식이면 OK
     if (/^\d{4}-\d{2}-\d{2}$/.test(norm)) return norm;
-    
-    // 비표준 결과 (예: "12-24-수") - 변환 실패
     return null;
   }
+  
+  // 매수일 + 모드 기반으로 합리적 매도일 추정
+  // 동파법: SF=35거래일, AG=7거래일 보유 후 만료(MOC) 매도
+  function estimateSellDate(buyDateStr, mode) {
+    if (!buyDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(buyDateStr)) return null;
+    try {
+      const buyDate = parseDate(buyDateStr);
+      const holdDays = mode === 'SF' ? 35 : 7;
+      const estimateDate = addTradingDays(buyDate, holdDays);
+      return fmtDate(estimateDate);
+    } catch (e) { return null; }
+  }
+  
+  // 오늘 날짜 (미래 검증용)
+  const todayStr = fmtDate(new Date());
   
   for (const acc of accounts) {
     // history 보정
@@ -4889,30 +4914,81 @@ function normalizeAllAccountDates() {
         const history = JSON.parse(historyRaw);
         let changed = false;
         for (const h of history) {
-          // 기존 date가 표준이 아니면 보정 시도
+          // 1단계: buyDate 표준화
+          if (h.buyDate && !/^\d{4}-\d{2}-\d{2}$/.test(h.buyDate)) {
+            const norm = safeNormalize(h.buyDate);
+            if (norm) { h.buyDate = norm; changed = true; }
+          }
+          // 1단계: expireDate 표준화
+          if (h.expireDate && !/^\d{4}-\d{2}-\d{2}$/.test(h.expireDate)) {
+            const norm = safeNormalize(h.expireDate);
+            if (norm) { h.expireDate = norm; changed = true; }
+          }
+          // 1단계: date 표준화
           if (h.date && !/^\d{4}-\d{2}-\d{2}$/.test(h.date)) {
             const norm = safeNormalize(h.date);
             if (norm) {
               h.date = norm; changed = true; totalFixed++;
             } else {
               totalSkipped++;
-              console.warn('[normalize] 변환 실패:', h.date, '(원본 유지)');
             }
           }
-          if (h.buyDate && !/^\d{4}-\d{2}-\d{2}$/.test(h.buyDate)) {
-            const norm = safeNormalize(h.buyDate);
-            if (norm) { h.buyDate = norm; changed = true; }
-          }
-          if (h.expireDate && !/^\d{4}-\d{2}-\d{2}$/.test(h.expireDate)) {
-            const norm = safeNormalize(h.expireDate);
-            if (norm) { h.expireDate = norm; changed = true; }
+          
+          // 2단계: 매도일 검증 (미래 너무 멀리?)
+          // 매도 거래(SELL_TARGET / SELL_EXPIRE) + 매수일 정확 + 매도일 미래 1년 이상
+          if ((h.type === 'SELL_TARGET' || h.type === 'SELL_EXPIRE') && 
+              h.date && /^\d{4}-\d{2}-\d{2}$/.test(h.date) &&
+              h.buyDate && /^\d{4}-\d{2}-\d{2}$/.test(h.buyDate)) {
+            
+            const sellTime = h.date;
+            const buyTime = h.buyDate;
+            
+            // 매도일이 미래 1년 이상 (명백히 잘못)
+            const isFutureFar = sellTime > addYears(todayStr, 1);
+            // 매도일이 매수일보다 1년 이상 늦음 (보유 기간 비정상)
+            const isWayLater = sellTime > addYears(buyTime, 1);
+            
+            if (isFutureFar || isWayLater) {
+              // 우선 시도 1: 매도일의 월/일 + 매수일의 연도 기반 보정
+              // (가장 정확 - 사용자 알려준 방법)
+              const sellMonth = parseInt(h.date.slice(5, 7));
+              const sellDay = h.date.slice(8, 10);
+              const buyYear = parseInt(h.buyDate.slice(0, 4));
+              const buyMonth = parseInt(h.buyDate.slice(5, 7));
+              
+              // 매도월 >= 매수월 → 같은 해, 미만 → 다음 해
+              const inferredYear = sellMonth >= buyMonth ? buyYear : buyYear + 1;
+              const sellMonthStr = String(sellMonth).padStart(2, '0');
+              const inferred = `${inferredYear}-${sellMonthStr}-${sellDay}`;
+              
+              // 추정 결과가 합리적인지 (오늘 이전 + 매수일 이후)
+              if (inferred <= todayStr && inferred >= h.buyDate) {
+                console.log(
+                  `[fix] 매도일 연도 추정: ${h.date} (매수: ${h.buyDate}) → ${inferred}`
+                );
+                h.date = inferred;
+                changed = true;
+                totalEstimated++;
+              } else {
+                // 시도 2: 보유기간 추정 (만료 가정)
+                const estimated = estimateSellDate(h.buyDate, h.mode);
+                if (estimated && estimated <= todayStr) {
+                  console.log(
+                    `[fix] 매도일 보유기간 추정: ${h.date} (매수: ${h.buyDate} ${h.mode}) → ${estimated}`
+                  );
+                  h.date = estimated;
+                  changed = true;
+                  totalEstimated++;
+                }
+              }
+            }
           }
         }
         if (changed) localStorage.setItem(histKey, JSON.stringify(history));
       } catch (e) { console.warn('history 보정 실패:', acc.id, e); }
     }
     
-    // positions 보정 (동일 로직)
+    // positions 보정
     const posKey = `dongpa_acc:${acc.id}:positions`;
     const positionsRaw = localStorage.getItem(posKey);
     if (positionsRaw) {
@@ -4935,12 +5011,19 @@ function normalizeAllAccountDates() {
   }
   
   STORE.set('dateNormVersion', CURRENT_VERSION);
-  if (totalFixed > 0 || totalSkipped > 0) {
-    console.log(`[normalize] 날짜 보정: ${totalFixed}건 성공, ${totalSkipped}건 실패`);
-    if (totalSkipped > 0) {
-      console.warn(`[normalize] ${totalSkipped}건은 변환 실패. 시트 다시 이식 권장`);
-    }
+  if (totalFixed > 0 || totalSkipped > 0 || totalEstimated > 0) {
+    console.log(
+      `[normalize] 날짜 보정: 형식 ${totalFixed}건, 추정 ${totalEstimated}건, 실패 ${totalSkipped}건`
+    );
   }
+}
+
+// 날짜에 N년 더하기 (YYYY-MM-DD → YYYY-MM-DD)
+function addYears(dateStr, years) {
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return dateStr;
+  const newYear = parseInt(m[1]) + years;
+  return `${newYear}-${m[2]}-${m[3]}`;
 }
 
 // ====================================================
