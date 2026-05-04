@@ -3582,26 +3582,50 @@ function normalizeSheetDate(raw) {
   let s = String(raw).trim();
   if (!s) return '';
   
-  // 요일 부분 제거: '(목)', '(월)' 등
-  s = s.replace(/\([월화수목금토일]\)/g, '').trim();
-  // 끝의 점 제거: '24.09.19.' → '24.09.19'
-  s = s.replace(/\.+$/, '').trim();
+  // 1. 요일 제거: 모든 형식
+  //    '(목)', '(월요일)' (괄호 + 요일)
+  //    '-수', '.목', ' 화' (구분자 + 요일 한 글자)
+  //    '월요일', '화요일' (요일 풀네임)
+  s = s.replace(/\([월화수목금토일](?:요일)?\)/g, '');  // 괄호 형식
+  s = s.replace(/[-./\s]?[월화수목금토일](?:요일)?$/, ''); // 끝의 요일
+  s = s.replace(/^[월화수목금토일](?:요일)?[-./\s]?/, ''); // 시작의 요일
+  s = s.trim();
   
-  // 구분자 통일 ('.' '/' → '-')
-  s = s.replace(/[./]/g, '-');
+  // 2. 끝의 점/하이픈 제거: '24.09.19.' → '24.09.19'
+  s = s.replace(/[.\-]+$/, '').trim();
   
-  // 매칭: YYYY-MM-DD 또는 YY-MM-DD
-  const m = s.match(/^(\d{2,4})-(\d{1,2})-(\d{1,2})$/);
-  if (!m) return s;  // 매칭 실패 시 원본 반환
+  // 3. 구분자 통일 ('.' '/' 공백 → '-')
+  s = s.replace(/[./\s]+/g, '-');
+  // 연속된 하이픈 정리
+  s = s.replace(/-+/g, '-').replace(/^-|-$/g, '');
   
-  let [_, y, mo, d] = m;
-  // 2자리 연도 → 4자리 (24 → 2024)
-  if (y.length === 2) y = '20' + y;
-  // 한 자리 월/일 → 두 자리 (9 → 09)
-  mo = mo.padStart(2, '0');
-  d = d.padStart(2, '0');
+  // 4. 숫자만 남기는 경우 (20251224 같은 8자리)
+  if (/^\d{8}$/.test(s)) {
+    return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+  }
   
-  return `${y}-${mo}-${d}`;
+  // 5. YYYY-MM-DD 또는 YY-MM-DD 매칭
+  let m = s.match(/^(\d{2,4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    let [_, y, mo, d] = m;
+    if (y.length === 2) y = '20' + y;
+    mo = mo.padStart(2, '0');
+    d = d.padStart(2, '0');
+    return `${y}-${mo}-${d}`;
+  }
+  
+  // 6. MM-DD 만 있는 경우 (해 없음): 현재 연도 가정
+  m = s.match(/^(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    let [_, mo, d] = m;
+    const y = String(new Date().getFullYear());
+    mo = mo.padStart(2, '0');
+    d = d.padStart(2, '0');
+    return `${y}-${mo}-${d}`;
+  }
+  
+  // 매칭 실패 시 원본 (디버그용)
+  return s;
 }
 
 // CSV 텍스트를 2차원 배열로 파싱
@@ -4822,6 +4846,103 @@ document.getElementById('seedAddCancelBtn').addEventListener('click', () => {
   renderPendingSeedAdd();
 });
 
+// 모든 계좌의 history/positions 날짜를 표준 형식으로 자동 보정
+// (한 번만 실행되도록 표시 키 사용)
+function normalizeAllAccountDates() {
+  const VERSION_KEY = 'dongpa_dateNormVersion';
+  const CURRENT_VERSION = '3';  // 비표준 형식 강제 보정
+  
+  if (STORE.get('dateNormVersion', '0') === CURRENT_VERSION) {
+    return; // 이미 보정됨
+  }
+  
+  const accounts = STORE.get('accounts', []);
+  let totalFixed = 0;
+  let totalSkipped = 0;
+  
+  // 보조 함수: 비표준 날짜를 안전하게 보정
+  // 표준 형식이 아니면 → null 반환 (덮어쓰지 않음)
+  function safeNormalize(raw) {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    
+    // 이미 표준 형식이면 그대로
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    
+    // 정규화 시도
+    const norm = normalizeSheetDate(s);
+    
+    // 표준 형식이면 OK
+    if (/^\d{4}-\d{2}-\d{2}$/.test(norm)) return norm;
+    
+    // 비표준 결과 (예: "12-24-수") - 변환 실패
+    return null;
+  }
+  
+  for (const acc of accounts) {
+    // history 보정
+    const histKey = `dongpa_acc:${acc.id}:history`;
+    const historyRaw = localStorage.getItem(histKey);
+    if (historyRaw) {
+      try {
+        const history = JSON.parse(historyRaw);
+        let changed = false;
+        for (const h of history) {
+          // 기존 date가 표준이 아니면 보정 시도
+          if (h.date && !/^\d{4}-\d{2}-\d{2}$/.test(h.date)) {
+            const norm = safeNormalize(h.date);
+            if (norm) {
+              h.date = norm; changed = true; totalFixed++;
+            } else {
+              totalSkipped++;
+              console.warn('[normalize] 변환 실패:', h.date, '(원본 유지)');
+            }
+          }
+          if (h.buyDate && !/^\d{4}-\d{2}-\d{2}$/.test(h.buyDate)) {
+            const norm = safeNormalize(h.buyDate);
+            if (norm) { h.buyDate = norm; changed = true; }
+          }
+          if (h.expireDate && !/^\d{4}-\d{2}-\d{2}$/.test(h.expireDate)) {
+            const norm = safeNormalize(h.expireDate);
+            if (norm) { h.expireDate = norm; changed = true; }
+          }
+        }
+        if (changed) localStorage.setItem(histKey, JSON.stringify(history));
+      } catch (e) { console.warn('history 보정 실패:', acc.id, e); }
+    }
+    
+    // positions 보정 (동일 로직)
+    const posKey = `dongpa_acc:${acc.id}:positions`;
+    const positionsRaw = localStorage.getItem(posKey);
+    if (positionsRaw) {
+      try {
+        const positions = JSON.parse(positionsRaw);
+        let changed = false;
+        for (const p of positions) {
+          if (p.buyDate && !/^\d{4}-\d{2}-\d{2}$/.test(p.buyDate)) {
+            const norm = safeNormalize(p.buyDate);
+            if (norm) { p.buyDate = norm; changed = true; }
+          }
+          if (p.expireDate && !/^\d{4}-\d{2}-\d{2}$/.test(p.expireDate)) {
+            const norm = safeNormalize(p.expireDate);
+            if (norm) { p.expireDate = norm; changed = true; }
+          }
+        }
+        if (changed) localStorage.setItem(posKey, JSON.stringify(positions));
+      } catch (e) { console.warn('positions 보정 실패:', acc.id, e); }
+    }
+  }
+  
+  STORE.set('dateNormVersion', CURRENT_VERSION);
+  if (totalFixed > 0 || totalSkipped > 0) {
+    console.log(`[normalize] 날짜 보정: ${totalFixed}건 성공, ${totalSkipped}건 실패`);
+    if (totalSkipped > 0) {
+      console.warn(`[normalize] ${totalSkipped}건은 변환 실패. 시트 다시 이식 권장`);
+    }
+  }
+}
+
 // ====================================================
 // 초기화
 // ====================================================
@@ -4861,6 +4982,9 @@ document.getElementById('seedAddCancelBtn').addEventListener('click', () => {
   // 만료된 매수 대기 정리 (당일 미체결 자동 삭제)
   // 매수는 당일 체결 안 되면 종료. 어제/이전 날짜 대기는 모두 제거.
   cleanupStalePendingBuys();
+  
+  // 기존 데이터 날짜 형식 자동 보정 (모든 계좌)
+  normalizeAllAccountDates();
   
   renderAll();
   
