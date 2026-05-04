@@ -930,6 +930,21 @@
       <div id="importPreview" style="display:none; margin-top: 14px; padding: 12px; background: var(--bg); border: 1px solid var(--accent-dark); border-radius: 8px;">
         <!-- 미리보기 내용 동적 표시 -->
       </div>
+      
+      <!-- 야후 폴백: 시트 종가 셀 -->
+      <div style="margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border-lite);">
+        <label style="font-size: 12px; color: var(--text-dim); display: block; margin-bottom: 6px;">
+          🔄 야후 실패 시 폴백 종가 셀 <span style="color: var(--text-faint);">(선택)</span>
+        </label>
+        <input type="text" id="closePriceCell" placeholder="예: O100, DB!B2 (비우면 O열 마지막 값)" 
+               style="width: 100%; font-size: 12px; padding: 8px; background: var(--surface); 
+                      border: 1px solid var(--border-lite); color: var(--text); border-radius: 6px;
+                      font-family: 'JetBrains Mono', monospace;">
+        <div style="font-size: 11px; color: var(--text-faint); margin-top: 6px; line-height: 1.5;">
+          시트에 <code>=GOOGLEFINANCE("SOXL")</code> 같은 셀이 있으면 셀 주소를 입력하세요.<br>
+          야후 자동 실패 시 이 셀 값으로 자동 폴백됩니다.
+        </div>
+      </div>
     </div>
     
     <div class="panel" style="border-color: var(--red-dark); background: rgba(228, 110, 110, 0.04);">
@@ -1955,20 +1970,32 @@ async function autoProcessDay() {
       }
     }
   } catch (e) {
-    // 실패 시 수동 입력
-    const manual = prompt(
-      `🌐 야후 자동 실패\n\n수동으로 오늘 SOXL 종가를 입력하세요:\n(취소 시 중단)`,
-      ''
-    );
-    if (manual === null || manual === '') {
-      btn.classList.add('fail');
-      btn.textContent = '✗ 실패';
-      hint.textContent = '사용자가 중단';
-      setTimeout(() => { btn.classList.remove('fail'); btn.textContent = '오늘 종가 자동 받기 + 청산 처리'; btn.disabled = false; }, 2000);
-      return;
+    // 야후 실패 → 시트 폴백 시도
+    hint.textContent = '🔄 야후 실패, 시트에서 종가 받는 중...';
+    try {
+      const sheetResult = await fetchClosePriceFromSheet();
+      closePrice = sheetResult.price;
+      priceSource = sheetResult.source;
+      console.log('[autoProcess] 시트 폴백 성공:', sheetResult);
+    } catch (sheetErr) {
+      // 시트도 실패 → 수동 입력
+      console.warn('[autoProcess] 시트 폴백 실패:', sheetErr.message);
+      const manual = prompt(
+        `🌐 야후 자동 실패\n` +
+        `📊 시트 폴백도 실패: ${sheetErr.message}\n\n` +
+        `수동으로 오늘 SOXL 종가를 입력하세요:\n(취소 시 중단)`,
+        ''
+      );
+      if (manual === null || manual === '') {
+        btn.classList.add('fail');
+        btn.textContent = '✗ 실패';
+        hint.textContent = '사용자가 중단';
+        setTimeout(() => { btn.classList.remove('fail'); btn.textContent = '오늘 종가 자동 받기 + 청산 처리'; btn.disabled = false; }, 2000);
+        return;
+      }
+      closePrice = parseFloat(manual);
+      priceSource = '수동 입력';
     }
-    closePrice = parseFloat(manual);
-    priceSource = '수동 입력';
   }
   
   if (!closePrice || isNaN(closePrice) || closePrice <= 0) {
@@ -3444,6 +3471,19 @@ document.getElementById('rsiPrev').addEventListener('input', () => { ACC.set('rs
 document.getElementById('rsiCurr').addEventListener('input', () => { ACC.set('rsiCurr', document.getElementById('rsiCurr').value); updateAutoModeHint(); });
 document.getElementById('prevWeekModeSelect').addEventListener('change', (e) => { ACC.set('prevWeekMode', e.target.value); updateAutoModeHint(); });
 
+// 종가 셀 (야후 폴백용)
+const closePriceCellEl = document.getElementById('closePriceCell');
+if (closePriceCellEl) {
+  // 로드
+  closePriceCellEl.value = ACC.get('closePriceCell', '') || STORE.get('closePriceCell', '');
+  // 저장 (계좌별 + 글로벌 둘 다)
+  closePriceCellEl.addEventListener('input', () => {
+    const val = closePriceCellEl.value.trim().toUpperCase();
+    ACC.set('closePriceCell', val);
+    STORE.set('closePriceCell', val);  // 글로벌도 저장 (다른 계좌에서도 사용)
+  });
+}
+
 document.getElementById('fetchRsiBtn').addEventListener('click', async () => {
   const btn = document.getElementById('fetchRsiBtn');
   const hint = document.getElementById('rsiHint');
@@ -3566,6 +3606,71 @@ function renderAll() {
 function extractSheetId(url) {
   const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   return match ? match[1] : null;
+}
+
+// ====================================================
+// 시트에서 SOXL 종가 가져오기 (야후 폴백용)
+// ====================================================
+// 시트의 게시 URL에서 CSV를 받아와서 특정 셀(예: O열 마지막 행, 또는 지정 셀)의 값을 반환
+// 사용자가 시트에 =GOOGLEFINANCE("SOXL") 같은 셀을 두면 항상 최신 종가 받을 수 있음
+async function fetchClosePriceFromSheet() {
+  const accountSheetUrl = ACC.get('lastSheetUrl', '') 
+    || document.getElementById('sheetUrl')?.value?.trim() 
+    || '';
+  
+  if (!accountSheetUrl) {
+    throw new Error('시트 URL이 등록되어 있지 않음');
+  }
+  
+  // 종가 셀 주소 (사용자 설정에서 가져옴, 없으면 'O' 마지막 행 사용)
+  const closeCellRef = ACC.get('closePriceCell', '') 
+    || STORE.get('closePriceCell', '')
+    || ''; // 예: 'O100' 또는 'DB!B2'
+  
+  // 게시 URL을 CSV 형식으로
+  let csvUrl = accountSheetUrl;
+  if (!csvUrl.includes('output=csv')) {
+    csvUrl += (csvUrl.includes('?') ? '&' : '?') + 'output=csv';
+  }
+  
+  const response = await fetch(csvUrl, { signal: AbortSignal.timeout(8000) });
+  if (!response.ok) throw new Error('시트 응답 실패: ' + response.status);
+  const csvText = await response.text();
+  const rows = parseCSV(csvText);
+  
+  // closeCellRef가 명시되지 않으면, 'O열 마지막 비어있지 않은 행' 사용 (각 거래일 종가)
+  if (!closeCellRef) {
+    // O열 = index 14
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const val = rows[i]?.[14];  // O = 14
+      if (val && !isNaN(parseFloat(val))) {
+        return { price: parseFloat(val), source: '시트 O열 (마지막 종가)' };
+      }
+    }
+    throw new Error('O열에서 종가를 찾지 못함');
+  }
+  
+  // closeCellRef 파싱: 'O100' 또는 'A1' 형식
+  const cellMatch = closeCellRef.match(/^([A-Z]+)(\d+)$/);
+  if (!cellMatch) throw new Error('잘못된 셀 주소: ' + closeCellRef);
+  
+  const colLetters = cellMatch[1];
+  const rowNum = parseInt(cellMatch[2]) - 1;  // 0-indexed
+  
+  // 컬럼 문자 → 인덱스 (A=0, B=1, ..., Z=25, AA=26, ...)
+  let colIdx = 0;
+  for (const ch of colLetters) {
+    colIdx = colIdx * 26 + (ch.charCodeAt(0) - 'A'.charCodeAt(0) + 1);
+  }
+  colIdx -= 1;
+  
+  if (rowNum >= rows.length) throw new Error('행 범위 초과: ' + closeCellRef);
+  const val = rows[rowNum]?.[colIdx];
+  if (!val || isNaN(parseFloat(val))) {
+    throw new Error(`셀 ${closeCellRef}이 비어있거나 숫자가 아님: '${val}'`);
+  }
+  
+  return { price: parseFloat(val), source: `시트 ${closeCellRef}` };
 }
 
 // 시트 날짜를 YYYY-MM-DD로 정규화
@@ -4008,6 +4113,12 @@ function showImportPreview(parsed) {
 
 // 파싱 결과를 LocalStorage에 적용
 function applyImport(parsed) {
+  // 시트 URL 저장 (야후 폴백 시 재사용)
+  const sheetUrl = document.getElementById('sheetUrl')?.value?.trim();
+  if (sheetUrl) {
+    ACC.set('lastSheetUrl', sheetUrl);
+  }
+  
   // 기본 값 적용
   if (parsed.ia !== null) document.getElementById('ia').value = Math.round(parsed.ia);
   if (parsed.cash !== null) document.getElementById('cash').value = Math.round(parsed.cash);
@@ -4272,18 +4383,29 @@ async function bulkProcessAllAccounts() {
       }
     }
   } catch (e) {
-    // 실패 시 수동 입력
-    const manual = prompt(
-      `🌐 야후 자동 실패\n\n수동으로 오늘 SOXL 종가를 입력하세요:\n(취소 시 중단)`,
-      ''
-    );
-    if (manual === null || manual === '') {
-      btn.textContent = '🚀 모든 계좌 일괄 처리 (' + ACC.list().length + '개 계좌)';
-      btn.disabled = false;
-      return;
+    // 야후 실패 → 시트 폴백 시도
+    btn.textContent = '🔄 시트에서 받는 중...';
+    try {
+      const sheetResult = await fetchClosePriceFromSheet();
+      closePrice = sheetResult.price;
+      priceSource = sheetResult.source;
+      console.log('[bulkProcess] 시트 폴백 성공:', sheetResult);
+    } catch (sheetErr) {
+      // 시트도 실패 → 수동 입력
+      const manual = prompt(
+        `🌐 야후 자동 실패\n` +
+        `📊 시트 폴백도 실패: ${sheetErr.message}\n\n` +
+        `수동으로 오늘 SOXL 종가를 입력하세요:\n(취소 시 중단)`,
+        ''
+      );
+      if (manual === null || manual === '') {
+        btn.textContent = '🚀 모든 계좌 일괄 처리 (' + ACC.list().length + '개 계좌)';
+        btn.disabled = false;
+        return;
+      }
+      closePrice = parseFloat(manual);
+      priceSource = '수동 입력';
     }
-    closePrice = parseFloat(manual);
-    priceSource = '수동 입력';
   }
   
   if (!closePrice || isNaN(closePrice) || closePrice <= 0) {
