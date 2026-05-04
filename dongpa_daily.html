@@ -809,6 +809,25 @@
           <div class="asset-cell-value" id="tradeCount">0/0</div>
         </div>
       </div>
+      
+      <!-- 필터 + 정렬 -->
+      <div style="display:flex; gap:8px; margin-top:14px; margin-bottom:10px;">
+        <select id="historyFilter" style="flex:1; padding:7px 10px; background:var(--surface); border:1px solid var(--border-lite); color:var(--text); border-radius:6px; font-size:12px; font-family:inherit;">
+          <option value="all">전체</option>
+          <option value="buy">매수만</option>
+          <option value="sell">매도만 (목표+만료)</option>
+          <option value="target">목표체결만</option>
+          <option value="expire">만료(MOC)만</option>
+          <option value="skip">미체결만</option>
+        </select>
+        <select id="historySort" style="flex:1; padding:7px 10px; background:var(--surface); border:1px solid var(--border-lite); color:var(--text); border-radius:6px; font-size:12px; font-family:inherit;">
+          <option value="date_desc">날짜 ↓ (최신)</option>
+          <option value="date_asc">날짜 ↑ (오래된)</option>
+          <option value="pnl_desc">손익 ↓ (큰 이익)</option>
+          <option value="pnl_asc">손익 ↑ (큰 손실)</option>
+        </select>
+      </div>
+      
       <div id="historyList">
         <div class="empty-list">기록 없음</div>
       </div>
@@ -2959,25 +2978,47 @@ window.copySellOrder = function(id) {
 // 기록 렌더링
 // ====================================================
 function renderHistory() {
-  const history = getHistory();
-  document.getElementById('historyCount').textContent = history.length + '건';
+  const allHistory = getHistory();
+  document.getElementById('historyCount').textContent = allHistory.length + '건';
   
-  // 손익 통계
-  const sells = history.filter(h => h.type === 'SELL_TARGET' || h.type === 'SELL_EXPIRE');
-  const totalPnl = sells.reduce((s, h) => s + (h.realizedPnl || 0), 0);
-  const wins = sells.filter(h => h.realizedPnl > 0).length;
-  const buys = history.filter(h => h.type === 'BUY').length;
+  // 손익 통계 (필터 무관, 전체 기준)
+  const allSells = allHistory.filter(h => h.type === 'SELL_TARGET' || h.type === 'SELL_EXPIRE');
+  const totalPnl = allSells.reduce((s, h) => s + (h.realizedPnl || 0), 0);
+  const wins = allSells.filter(h => h.realizedPnl > 0).length;
+  const buys = allHistory.filter(h => h.type === 'BUY').length;
   
   const pnlEl = document.getElementById('totalRealizedPnl');
   pnlEl.textContent = (totalPnl >= 0 ? '+$' : '-$') + Math.abs(totalPnl).toLocaleString('en-US', {maximumFractionDigits: 0});
   pnlEl.className = 'asset-cell-value ' + (totalPnl >= 0 ? 'profit' : 'loss');
   
-  document.getElementById('winRate').textContent = sells.length > 0 ? (wins/sells.length*100).toFixed(0) + '%' : '—';
-  document.getElementById('tradeCount').textContent = `${buys}/${sells.length}`;
+  document.getElementById('winRate').textContent = allSells.length > 0 ? (wins/allSells.length*100).toFixed(0) + '%' : '—';
+  document.getElementById('tradeCount').textContent = `${buys}/${allSells.length}`;
+  
+  // 필터 적용
+  const filterVal = document.getElementById('historyFilter')?.value || 'all';
+  let filtered = allHistory.slice();
+  if (filterVal === 'buy') filtered = filtered.filter(h => h.type === 'BUY');
+  else if (filterVal === 'sell') filtered = filtered.filter(h => h.type === 'SELL_TARGET' || h.type === 'SELL_EXPIRE');
+  else if (filterVal === 'target') filtered = filtered.filter(h => h.type === 'SELL_TARGET');
+  else if (filterVal === 'expire') filtered = filtered.filter(h => h.type === 'SELL_EXPIRE');
+  else if (filterVal === 'skip') filtered = filtered.filter(h => h.type === 'BUY_SKIP');
+  
+  // 정렬 적용
+  const sortVal = document.getElementById('historySort')?.value || 'date_desc';
+  filtered.sort((a, b) => {
+    if (sortVal === 'date_desc') return (b.date || '').localeCompare(a.date || '');
+    if (sortVal === 'date_asc') return (a.date || '').localeCompare(b.date || '');
+    if (sortVal === 'pnl_desc') return (b.realizedPnl || 0) - (a.realizedPnl || 0);
+    if (sortVal === 'pnl_asc') return (a.realizedPnl || 0) - (b.realizedPnl || 0);
+    return 0;
+  });
+  
+  // 화면에 표시되는 history는 filtered (count도 같이 갱신 - 옵션)
+  const history = filtered;
   
   const list = document.getElementById('historyList');
   if (history.length === 0) {
-    list.innerHTML = '<div class="empty-list">기록 없음</div>';
+    list.innerHTML = '<div class="empty-list">' + (filterVal === 'all' ? '기록 없음' : '필터 결과 없음') + '</div>';
     return;
   }
   
@@ -3436,6 +3477,11 @@ document.getElementById('resetRsiBtn').addEventListener('click', () => {
 document.getElementById('clearHistory').addEventListener('click', () => {
   if (confirm('매매 기록을 전부 삭제할까요?')) { ACC.remove('history'); renderHistory(); }
 });
+
+// 기록 필터/정렬 변경 시 재렌더
+document.getElementById('historyFilter').addEventListener('change', renderHistory);
+document.getElementById('historySort').addEventListener('change', renderHistory);
+
 // 현재 계좌만 초기화
 document.getElementById('resetCurrentAccount').addEventListener('click', () => {
   const currentId = ACC.current();
@@ -4143,6 +4189,237 @@ document.getElementById('manageAccountsBtn').addEventListener('click', () => {
 // ====================================================
 // 전체 계좌 대시보드
 // ====================================================
+// ====================================================
+// 모든 계좌 일괄 자동 체결 판정
+// ====================================================
+async function bulkProcessAllAccounts() {
+  const btn = document.getElementById('bulkProcessBtn');
+  if (!btn) return;
+  
+  if (!confirm(
+    `🚀 모든 계좌의 자동 체결 판정을 실행합니다.\n\n` +
+    `각 계좌마다:\n` +
+    `• 어제 LOC 매수 → 종가에 체결되었는지 판정\n` +
+    `• 만료된 매도 포지션 → MOC 청산\n` +
+    `• 목표가 도달한 매도 → 청산\n\n` +
+    `장 마감 후에 실행하세요.\n계속할까요?`
+  )) return;
+  
+  // 1. SOXL 종가 1번만 받아오기 (모든 계좌 공통)
+  btn.textContent = '⏳ 종가 받는 중...';
+  btn.disabled = true;
+  
+  let closePrice = null;
+  let priceSource = '';
+  
+  try {
+    // 우선 야후 시도
+    const tickers = ['SOXL'];
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${tickers[0]}?interval=1d&range=5d`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('yahoo failed');
+    const data = await response.json();
+    const result = data.chart.result[0];
+    const closes = result.indicators.quote[0].close;
+    const timestamps = result.timestamp;
+    for (let i = closes.length - 1; i >= 0; i--) {
+      if (closes[i] !== null) {
+        closePrice = closes[i];
+        priceSource = '야후';
+        break;
+      }
+    }
+  } catch (e) {
+    // 실패 시 수동 입력
+    const manual = prompt(
+      `🌐 야후 자동 실패\n\n수동으로 오늘 SOXL 종가를 입력하세요:\n(취소 시 중단)`,
+      ''
+    );
+    if (manual === null || manual === '') {
+      btn.textContent = '🚀 모든 계좌 일괄 처리 (' + ACC.list().length + '개 계좌)';
+      btn.disabled = false;
+      return;
+    }
+    closePrice = parseFloat(manual);
+    priceSource = '수동 입력';
+  }
+  
+  if (!closePrice || isNaN(closePrice) || closePrice <= 0) {
+    alert('유효한 종가를 받지 못함');
+    btn.textContent = '🚀 모든 계좌 일괄 처리 (' + ACC.list().length + '개 계좌)';
+    btn.disabled = false;
+    return;
+  }
+  
+  btn.textContent = '⏳ 처리 중...';
+  
+  // 2. 각 계좌 순회하며 처리
+  const accounts = ACC.list();
+  const originalAccount = ACC.current();
+  const allResults = [];  // {accId, accName, results}
+  
+  for (const acc of accounts) {
+    // 계좌 전환 (메모리 상)
+    STORE.set('currentAccountId', acc.id);
+    
+    // 그 계좌의 처리 결과 수집
+    const accResult = await processSingleAccount(closePrice, acc);
+    allResults.push({ accId: acc.id, accName: acc.name, ...accResult });
+  }
+  
+  // 원래 계좌로 복귀
+  STORE.set('currentAccountId', originalAccount);
+  
+  // 3. 통합 결과 표시
+  let msg = `✓ 일괄 처리 완료\n\n`;
+  msg += `SOXL 종가: $${closePrice.toFixed(2)} (${priceSource})\n\n`;
+  
+  let totalBuyFilled = 0, totalBuySkipped = 0, totalSellTarget = 0, totalSellExpired = 0;
+  let totalPnl = 0;
+  
+  for (const r of allResults) {
+    const items = [];
+    if (r.buyFilled.length > 0) items.push(`🟢 매수 ${r.buyFilled.length}건`);
+    if (r.buySkipped.length > 0) items.push(`⚪ 미체결 ${r.buySkipped.length}건`);
+    if (r.sellTarget.length > 0) items.push(`🎯 목표 ${r.sellTarget.length}건`);
+    if (r.sellExpired.length > 0) items.push(`⏰ 만료 ${r.sellExpired.length}건`);
+    
+    totalBuyFilled += r.buyFilled.length;
+    totalBuySkipped += r.buySkipped.length;
+    totalSellTarget += r.sellTarget.length;
+    totalSellExpired += r.sellExpired.length;
+    totalPnl += [...r.sellTarget, ...r.sellExpired].reduce((s, x) => s + (x.pnl || 0), 0);
+    
+    if (items.length > 0) {
+      msg += `📊 ${r.accName}: ${items.join(', ')}\n`;
+    } else {
+      msg += `📊 ${r.accName}: 처리 없음\n`;
+    }
+  }
+  
+  msg += `\n━━━━━━━━━━━━━\n`;
+  msg += `총합: 매수${totalBuyFilled} / 미체결${totalBuySkipped} / 목표${totalSellTarget} / 만료${totalSellExpired}\n`;
+  msg += `총 실현손익: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
+  
+  alert(msg);
+  
+  // 화면 새로고침 (대시보드 재렌더)
+  location.reload();
+}
+
+// 단일 계좌 처리 (bulkProcess에서 사용)
+async function processSingleAccount(closePrice, acc) {
+  const today = fmtDate(new Date());
+  const results = { buyFilled: [], buySkipped: [], sellTarget: [], sellExpired: [] };
+  
+  // 그 계좌의 settings 읽기 (글로벌 settings 사용 - 동파법 파라미터)
+  const sfSell = parseFloat(document.getElementById('set_sfSell').value) / 100;
+  const agSell = parseFloat(document.getElementById('set_agSell').value) / 100;
+  const sfHold = parseInt(document.getElementById('set_sfHold').value);
+  const agHold = parseInt(document.getElementById('set_agHold').value);
+  
+  // 1. 매수 체결 처리
+  const pending = ACC.get('pendingBuys', []);
+  for (const pb of pending) {
+    if (closePrice <= pb.bidPrice) {
+      // 체결
+      const sellTarget = pb.mode === 'SF'
+        ? Math.round(closePrice * (1 + sfSell) * 100) / 100
+        : Math.round(closePrice * (1 + agSell) * 100) / 100;
+      const holdDays = pb.mode === 'SF' ? sfHold : agHold;
+      const buyDate = pb.orderDate || today;
+      const buyDateObj = parseDate(buyDate);
+      const expireDate = fmtDate(addTradingDays(buyDateObj, holdDays));
+      
+      const newPos = addPosition({
+        buyDate: buyDate,
+        mode: pb.mode,
+        buyPrice: closePrice,
+        qty: pb.qty,
+        sellTarget,
+        holdDays,
+        expireDate,
+        boosted: pb.boosted,
+        tier: pb.tier,
+        orderPrice: pb.bidPrice,
+        sellRegistered: false,
+      });
+      
+      addHistory({
+        id: 'H' + Date.now() + '_' + Math.random().toString(36).slice(2,5) + '_' + newPos.id,
+        date: buyDate,
+        type: 'BUY', mode: pb.mode,
+        orderPrice: pb.bidPrice, fillPrice: closePrice,
+        qty: pb.qty, tier: pb.tier,
+        boosted: pb.boosted,
+        sellTarget, expireDate,
+        posId: newPos.id,
+      });
+      
+      results.buyFilled.push({ mode: pb.mode, qty: pb.qty, bid: pb.bidPrice, fill: closePrice });
+    } else {
+      // 미체결
+      const skipDate = pb.orderDate || today;
+      addHistory({
+        id: 'H' + Date.now() + '_' + Math.random().toString(36).slice(2,5) + '_skip',
+        date: skipDate,
+        type: 'BUY_SKIP', mode: pb.mode,
+        orderPrice: pb.bidPrice, closePrice,
+        qty: pb.qty, tier: pb.tier,
+        boosted: pb.boosted,
+      });
+      results.buySkipped.push({ mode: pb.mode, qty: pb.qty, bid: pb.bidPrice, close: closePrice });
+    }
+  }
+  ACC.set('pendingBuys', []);
+  
+  // 2. 매도 청산 처리
+  const positions = getPositions();
+  for (const p of positions) {
+    if (p.status !== 'open') continue;
+    if (p.buyDate === today) continue;  // 방금 매수한 건 제외
+    if (!p.sellRegistered) continue;
+    
+    let event = null;
+    if (today < p.expireDate && closePrice >= p.sellTarget) {
+      event = { type: 'TARGET', exitPrice: closePrice };
+    } else if (today >= p.expireDate) {
+      event = { type: 'EXPIRE', exitPrice: closePrice };
+    }
+    
+    if (event) {
+      const pnl = (event.exitPrice - p.buyPrice) * p.qty;
+      p.status = 'closed';
+      p.exitDate = today;
+      p.exitPrice = event.exitPrice;
+      p.exitType = event.type;
+      p.realizedPnl = Math.round(pnl * 100) / 100;
+      
+      addHistory({
+        id: 'H' + Date.now() + '_' + Math.random().toString(36).slice(2,5) + '_sell_' + p.id,
+        date: today,
+        type: event.type === 'TARGET' ? 'SELL_TARGET' : 'SELL_EXPIRE',
+        mode: p.mode,
+        buyPrice: p.buyPrice, exitPrice: event.exitPrice,
+        qty: p.qty, posId: p.id,
+        sellTarget: p.sellTarget, buyDate: p.buyDate,
+        boosted: p.boosted, realizedPnl: p.realizedPnl,
+      });
+      
+      if (event.type === 'TARGET') results.sellTarget.push({ mode: p.mode, qty: p.qty, pnl: p.realizedPnl });
+      else results.sellExpired.push({ mode: p.mode, qty: p.qty, pnl: p.realizedPnl });
+    }
+  }
+  setPositions(positions);
+  
+  // 3. 복리 카운터 업데이트
+  if (typeof updateCompoundCounter === 'function') {
+    updateCompoundCounter();
+  }
+  
+  return results;
+}
+
 function renderDashboard(targetId = 'dashboardBody') {
   const accounts = ACC.list();
   const currentId = ACC.current();
@@ -4275,6 +4552,19 @@ function renderDashboard(targetId = 'dashboardBody') {
     </div>
   `;
   
+  // 일괄 처리 버튼 (항상 표시)
+  html += `
+    <button id="bulkProcessBtn" style="
+      width: 100%; padding: 14px; margin-bottom: 12px;
+      background: var(--accent-dark); color: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 8px; cursor: pointer;
+      font-family: inherit; font-size: 13px; font-weight: 600;
+    ">
+      🚀 모든 계좌 일괄 처리 (${accounts.length}개 계좌)
+    </button>
+  `;
+  
   // 오늘 주문 통합 섹션
   if (buyOrders.length > 0 || urgentSells.length > 0 || targetSells.length > 0) {
     html += `
@@ -4398,6 +4688,12 @@ function renderDashboard(targetId = 'dashboardBody') {
   `).join('');
   
   document.getElementById(targetId).innerHTML = html;
+  
+  // 일괄 처리 버튼 (있는 경우만)
+  const bulkBtn = document.querySelector(`#${targetId} #bulkProcessBtn`);
+  if (bulkBtn) {
+    bulkBtn.addEventListener('click', bulkProcessAllAccounts);
+  }
   
   // 계좌 카드 클릭 시 그 계좌로 전환
   document.querySelectorAll(`#${targetId} .dashboard-account-card`).forEach(card => {
