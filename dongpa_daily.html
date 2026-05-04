@@ -3484,6 +3484,21 @@ if (closePriceCellEl) {
   });
 }
 
+// 시트 URL 자동 저장 + 로드 (이식과 무관, 폴백용)
+const sheetUrlEl = document.getElementById('sheetUrl');
+if (sheetUrlEl) {
+  // 로드: 저장된 URL이 있으면 입력란에 자동 표시
+  const savedUrl = ACC.get('lastSheetUrl', '');
+  if (savedUrl && !sheetUrlEl.value) {
+    sheetUrlEl.value = savedUrl;
+  }
+  // 저장: 입력하면 즉시 저장 (이식 안 해도 폴백용으로 사용 가능)
+  sheetUrlEl.addEventListener('input', () => {
+    const val = sheetUrlEl.value.trim();
+    if (val) ACC.set('lastSheetUrl', val);
+  });
+}
+
 document.getElementById('fetchRsiBtn').addEventListener('click', async () => {
   const btn = document.getElementById('fetchRsiBtn');
   const hint = document.getElementById('rsiHint');
