@@ -3629,13 +3629,29 @@ function extractSheetId(url) {
 // 시트의 게시 URL에서 CSV를 받아와서 특정 셀(예: O열 마지막 행, 또는 지정 셀)의 값을 반환
 // 사용자가 시트에 =GOOGLEFINANCE("SOXL") 같은 셀을 두면 항상 최신 종가 받을 수 있음
 async function fetchClosePriceFromSheet() {
-  const accountSheetUrl = ACC.get('lastSheetUrl', '') 
-    || document.getElementById('sheetUrl')?.value?.trim() 
-    || '';
+  // 모든 계좌의 lastSheetUrl 중 첫 번째 사용 가능한 URL 찾기
+  // (활성 계좌만 보지 않고, 어떤 계좌든 URL 있으면 시도)
+  let accountSheetUrl = ACC.get('lastSheetUrl', '');
+  if (!accountSheetUrl) {
+    for (const acc of ACC.list()) {
+      const url = ACC.getFor(acc.id, 'lastSheetUrl', '');
+      if (url) { accountSheetUrl = url; break; }
+    }
+  }
+  if (!accountSheetUrl) {
+    accountSheetUrl = document.getElementById('sheetUrl')?.value?.trim() || '';
+  }
   
   if (!accountSheetUrl) {
     throw new Error('시트 URL이 등록되어 있지 않음');
   }
+  
+  // URL 검증: '...' 같은 표시용 줄임표 포함 시 거부
+  if (accountSheetUrl.includes('...') || accountSheetUrl.length < 50) {
+    throw new Error('잘못된 시트 URL: ' + accountSheetUrl.slice(0, 60));
+  }
+  
+  console.log('[sheet-fetch] URL 사용:', accountSheetUrl.slice(0, 80) + '...');
   
   // 종가 셀 주소 (사용자 설정에서 가져옴, 없으면 'O' 마지막 행 사용)
   const closeCellRef = ACC.get('closePriceCell', '') 
@@ -3648,10 +3664,13 @@ async function fetchClosePriceFromSheet() {
     csvUrl += (csvUrl.includes('?') ? '&' : '?') + 'output=csv';
   }
   
+  console.log('[sheet-fetch] fetching...');
   const response = await fetch(csvUrl, { signal: AbortSignal.timeout(8000) });
-  if (!response.ok) throw new Error('시트 응답 실패: ' + response.status);
+  console.log('[sheet-fetch] status:', response.status);
+  if (!response.ok) throw new Error('시트 응답 실패: HTTP ' + response.status);
   const csvText = await response.text();
   const rows = parseCSV(csvText);
+  console.log('[sheet-fetch] rows:', rows.length);
   
   // closeCellRef가 명시되지 않으면, 'O열 마지막 비어있지 않은 행' 사용 (각 거래일 종가)
   if (!closeCellRef) {
@@ -3659,10 +3678,12 @@ async function fetchClosePriceFromSheet() {
     for (let i = rows.length - 1; i >= 0; i--) {
       const val = rows[i]?.[14];  // O = 14
       if (val && !isNaN(parseFloat(val))) {
-        return { price: parseFloat(val), source: '시트 O열 (마지막 종가)' };
+        const price = parseFloat(val);
+        console.log('[sheet-fetch] O열 마지막 종가:', price, '(행', i + 1, ')');
+        return { price, source: '시트 O열 (행' + (i + 1) + ')' };
       }
     }
-    throw new Error('O열에서 종가를 찾지 못함');
+    throw new Error('O열에서 종가를 찾지 못함 (' + rows.length + '행)');
   }
   
   // closeCellRef 파싱: 'O100' 또는 'A1' 형식
@@ -4381,11 +4402,11 @@ async function bulkProcessAllAccounts() {
   let priceSource = '';
   
   try {
-    // 우선 야후 시도
-    const tickers = ['SOXL'];
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${tickers[0]}?interval=1d&range=5d`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('yahoo failed');
+    // 우선 야후 시도 (corsproxy 통해서)
+    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=5d';
+    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+    const response = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('yahoo failed: ' + response.status);
     const data = await response.json();
     const result = data.chart.result[0];
     const closes = result.indicators.quote[0].close;
@@ -4393,11 +4414,12 @@ async function bulkProcessAllAccounts() {
     for (let i = closes.length - 1; i >= 0; i--) {
       if (closes[i] !== null) {
         closePrice = closes[i];
-        priceSource = '야후';
+        priceSource = '야후 (' + fmtDate(new Date(timestamps[i] * 1000)) + ')';
         break;
       }
     }
   } catch (e) {
+    console.warn('[bulkProcess] 야후 실패:', e.message);
     // 야후 실패 → 시트 폴백 시도
     btn.textContent = '🔄 시트에서 받는 중...';
     try {
@@ -4499,6 +4521,8 @@ async function processSingleAccount(closePrice, acc) {
   const today = fmtDate(new Date());
   const results = { buyFilled: [], buySkipped: [], sellTarget: [], sellExpired: [] };
   
+  console.log(`[bulk:${acc.name}] 처리 시작 (종가 $${closePrice})`);
+  
   // 그 계좌의 settings 읽기 (글로벌 settings 사용 - 동파법 파라미터)
   const sfSell = parseFloat(document.getElementById('set_sfSell').value) / 100;
   const agSell = parseFloat(document.getElementById('set_agSell').value) / 100;
@@ -4507,8 +4531,13 @@ async function processSingleAccount(closePrice, acc) {
   
   // 1. 매수 체결 처리
   const pending = ACC.get('pendingBuys', []);
+  console.log(`[bulk:${acc.name}] 매수 대기 ${pending.length}건`);
   for (const pb of pending) {
-    if (closePrice <= pb.bidPrice) {
+    const filled = closePrice <= pb.bidPrice;
+    console.log(
+      `[bulk:${acc.name}] 매수판정: 종가 $${closePrice} vs 지정가 $${pb.bidPrice} → ${filled ? '✓체결' : '✗미체결'}`
+    );
+    if (filled) {
       // 체결
       const sellTarget = pb.mode === 'SF'
         ? Math.round(closePrice * (1 + sfSell) * 100) / 100
@@ -4613,7 +4642,12 @@ async function processSingleAccount(closePrice, acc) {
     const peakPrice = parseFloat(formState.peakPrice) || closePrice;
     const mode = ACC.get('todayMode', 'SF');
     
-    if (ia > 0) {
+    console.log(`[bulk:${acc.name}] 새 주문 계산 - IA: $${ia}, 현금: $${cash}, 모드: ${mode}`);
+    
+    if (ia <= 0) {
+      console.warn(`[bulk:${acc.name}] IA가 0 또는 미설정 - 새 주문 건너뜀`);
+      results.iaZero = true;
+    } else {
       // 동파법 설정 (글로벌)
       const sfBuy = parseFloat(document.getElementById('set_sfBuy').value) / 100;
       const sfSplit = parseInt(document.getElementById('set_sfSplit').value);
@@ -4876,15 +4910,18 @@ function renderDashboard(targetId = 'dashboardBody') {
       `;
       urgentSells.forEach(o => {
         html += `
-          <div style="font-size:11px; padding:5px 8px; background:rgba(228,110,110,0.05); border-radius:4px; margin-bottom:3px; display:flex; justify-content:space-between; align-items:center;">
-            <span>
-              <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:${o.accColor}; margin-right:5px;"></span>
-              <span style="color:var(--text-dim);">${o.accName}</span>
-              <span style="color:var(--text); margin-left:6px;">${o.mode}${o.boosted ? ' 🚀' : ''}</span>
-            </span>
-            <span style="font-family:'JetBrains Mono', monospace;">
-              ${o.qty}주 종가매도
-            </span>
+          <div style="font-size:11px; padding:5px 8px; background:rgba(228,110,110,0.05); border-radius:4px; margin-bottom:3px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span>
+                <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:${o.accColor}; margin-right:5px;"></span>
+                <span style="color:var(--text-dim);">${o.accName}</span>
+                <span style="color:var(--text); margin-left:6px;">${o.mode}${o.boosted ? ' 🚀' : ''}</span>
+              </span>
+              <span style="font-family:'JetBrains Mono', monospace;">
+                ${o.qty}주 종가매도
+              </span>
+            </div>
+            ${o.expireDate ? `<div style="font-size:10px; color:var(--red); margin-top:2px;">📅 만료일 ${o.expireDate}${o.expireDate < todayStr ? ' (지남!)' : ''}</div>` : ''}
           </div>
         `;
       });
@@ -4898,16 +4935,20 @@ function renderDashboard(targetId = 'dashboardBody') {
           <div style="font-size:10px; color:var(--text-dim); margin-bottom:4px;">🎯 목표가 매도 등록 (${targetSells.length}건)</div>
       `;
       targetSells.forEach(o => {
+        const expireText = o.expireDate ? ` · ~${o.expireDate}` : '';
         html += `
-          <div style="font-size:11px; padding:5px 8px; background:var(--surface); border-radius:4px; margin-bottom:3px; display:flex; justify-content:space-between; align-items:center;">
-            <span>
-              <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:${o.accColor}; margin-right:5px;"></span>
-              <span style="color:var(--text-dim);">${o.accName}</span>
-              <span style="color:var(--text); margin-left:6px;">${o.mode}${o.boosted ? ' 🚀' : ''}</span>
-            </span>
-            <span style="font-family:'JetBrains Mono', monospace;">
-              $${o.sellTarget?.toFixed(2) || '-'} × ${o.qty}
-            </span>
+          <div style="font-size:11px; padding:5px 8px; background:var(--surface); border-radius:4px; margin-bottom:3px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span>
+                <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:${o.accColor}; margin-right:5px;"></span>
+                <span style="color:var(--text-dim);">${o.accName}</span>
+                <span style="color:var(--text); margin-left:6px;">${o.mode}${o.boosted ? ' 🚀' : ''}</span>
+              </span>
+              <span style="font-family:'JetBrains Mono', monospace;">
+                $${o.sellTarget?.toFixed(2) || '-'} × ${o.qty}
+              </span>
+            </div>
+            ${o.expireDate ? `<div style="font-size:10px; color:var(--text-faint); margin-top:2px;">📅 LOC 만료: ${o.expireDate}</div>` : ''}
           </div>
         `;
       });
