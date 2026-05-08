@@ -4456,12 +4456,19 @@ async function bulkProcessAllAccounts() {
   let totalBuyFilled = 0, totalBuySkipped = 0, totalSellTarget = 0, totalSellExpired = 0;
   let totalPnl = 0;
   
+  let totalNewOrders = 0;
   for (const r of allResults) {
     const items = [];
     if (r.buyFilled.length > 0) items.push(`🟢 매수 ${r.buyFilled.length}건`);
     if (r.buySkipped.length > 0) items.push(`⚪ 미체결 ${r.buySkipped.length}건`);
     if (r.sellTarget.length > 0) items.push(`🎯 목표 ${r.sellTarget.length}건`);
     if (r.sellExpired.length > 0) items.push(`⏰ 만료 ${r.sellExpired.length}건`);
+    if (r.newOrder) {
+      items.push(`📝 신규 ${r.mode || r.newOrder.mode} $${r.newOrder.bidPrice.toFixed(2)}×${r.newOrder.qty}${r.newOrder.boosted ? '🚀' : ''}`);
+      totalNewOrders++;
+    } else if (r.tierFull) {
+      items.push(`✋ 티어초과`);
+    }
     
     totalBuyFilled += r.buyFilled.length;
     totalBuySkipped += r.buySkipped.length;
@@ -4477,7 +4484,8 @@ async function bulkProcessAllAccounts() {
   }
   
   msg += `\n━━━━━━━━━━━━━\n`;
-  msg += `총합: 매수${totalBuyFilled} / 미체결${totalBuySkipped} / 목표${totalSellTarget} / 만료${totalSellExpired}\n`;
+  msg += `체결: 매수${totalBuyFilled} / 미체결${totalBuySkipped} / 목표${totalSellTarget} / 만료${totalSellExpired}\n`;
+  msg += `신규 주문: ${totalNewOrders}건 (대시보드에서 확인)\n`;
   msg += `총 실현손익: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}`;
   
   alert(msg);
@@ -4594,6 +4602,90 @@ async function processSingleAccount(closePrice, acc) {
   // 3. 복리 카운터 업데이트
   if (typeof updateCompoundCounter === 'function') {
     updateCompoundCounter();
+  }
+  
+  // 4. 오늘 새 매수 주문 자동 계산 (등록만, 체결은 다음 날)
+  // 동파법: 매일 1건 LOC 매수 주문 등록
+  try {
+    const formState = ACC.get('formState', {});
+    const ia = parseFloat(formState.ia) || 0;
+    const cash = parseFloat(formState.cash) || 0;
+    const peakPrice = parseFloat(formState.peakPrice) || closePrice;
+    const mode = ACC.get('todayMode', 'SF');
+    
+    if (ia > 0) {
+      // 동파법 설정 (글로벌)
+      const sfBuy = parseFloat(document.getElementById('set_sfBuy').value) / 100;
+      const sfSplit = parseInt(document.getElementById('set_sfSplit').value);
+      const agBuy = parseFloat(document.getElementById('set_agBuy').value) / 100;
+      const agSplit = parseInt(document.getElementById('set_agSplit').value);
+      const normalPct = parseFloat(document.getElementById('set_normal').value) / 100;
+      const boostPct = parseFloat(document.getElementById('set_boost').value) / 100;
+      const ddEntry = parseFloat(document.getElementById('set_ddEntry').value) / 100;
+      const ddExit = parseFloat(document.getElementById('set_ddExit').value) / 100;
+      
+      // 부스트 판정
+      let peak = peakPrice && peakPrice > 0 ? peakPrice : closePrice;
+      if (closePrice > peak) peak = closePrice;
+      const pdd = peak > 0 ? (peak - closePrice) / peak : 0;
+      const prevBoost = ACC.get('boosterOn', false);
+      let boosterOn = prevBoost === true;  // 단순화: candidate는 OFF로
+      if (!boosterOn) {
+        if (pdd >= ddEntry) boosterOn = true;
+      } else {
+        if (pdd < ddExit) boosterOn = false;
+      }
+      
+      // 현재 보유 = 티어
+      const tier = positions.filter(p => p.status === 'open' || !p.status).length;
+      const currentSplit = mode === 'AG' ? agSplit : sfSplit;
+      const tierForSeed = tier + 1;
+      
+      // 분할 가능 (티어 미초과)
+      if (tierForSeed <= currentSplit) {
+        const buyPct = mode === 'SF' ? sfBuy : agBuy;
+        const bidPrice = Math.round(closePrice * (1 - buyPct) * 100) / 100;
+        
+        // 시드 계산
+        const seedBase = ia / currentSplit;
+        const seedFactor = boosterOn ? boostPct : normalPct;
+        const seed = seedBase * seedFactor;
+        const qty = Math.floor(seed / bidPrice);
+        
+        if (qty > 0 && bidPrice > 0) {
+          // 새 매수 주문 등록 (오늘 날짜로)
+          const newPending = {
+            id: 'PB' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            mode: mode,
+            qty: qty,
+            bidPrice: bidPrice,
+            seed: Math.round(seed),
+            tier: tierForSeed,
+            boosted: boosterOn,
+            orderDate: today,
+          };
+          ACC.set('pendingBuys', [newPending]);
+          
+          // 부스트 상태도 저장
+          ACC.set('boosterOn', boosterOn);
+          ACC.set('peakPrice', peak);
+          
+          results.newOrder = {
+            mode: mode,
+            qty: qty,
+            bidPrice: bidPrice,
+            boosted: boosterOn,
+            tier: tierForSeed,
+            split: currentSplit,
+          };
+        }
+      } else {
+        // 티어 초과 - 신규 주문 안 함
+        results.tierFull = true;
+      }
+    }
+  } catch (e) {
+    console.warn('[bulkProcess] 새 주문 계산 실패:', acc.name, e.message);
   }
   
   return results;
