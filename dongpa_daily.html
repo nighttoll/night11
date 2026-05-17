@@ -460,6 +460,102 @@
   
   .pnl-positive { color: var(--green); }
   .pnl-negative { color: var(--red); }
+  
+  /* ===== 시트뷰 표 스타일 ===== */
+  .sheet-table-container {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: calc(100vh - 280px);
+    -webkit-overflow-scrolling: touch;
+  }
+  .sheet-table {
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    white-space: nowrap;
+    min-width: 100%;
+  }
+  .sheet-table th,
+  .sheet-table td {
+    padding: 5px 8px;
+    border-right: 1px solid var(--border-lite);
+    border-bottom: 1px solid var(--border-lite);
+    text-align: right;
+  }
+  .sheet-table th {
+    background: var(--surface-2);
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 9px;
+    text-transform: uppercase;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    text-align: center;
+  }
+  /* 첫 컬럼(날짜) sticky - 가로 스크롤해도 보임 */
+  .sheet-table th:nth-child(1),
+  .sheet-table td:nth-child(1) {
+    position: sticky;
+    left: 0;
+    background: var(--surface-2);
+    z-index: 3;
+    min-width: 100px;
+    text-align: left;
+    border-right: 2px solid var(--border-lite);
+  }
+  .sheet-table th:nth-child(1) {
+    z-index: 4;  /* 헤더 + sticky 조합 */
+  }
+  /* 시즌 변경 시 위쪽 굵은 선 */
+  .sheet-table tr.season-start td {
+    border-top: 2px solid var(--accent-dark);
+  }
+  /* 자동 계산 셀 */
+  .sheet-table td.computed {
+    color: var(--text-dim);
+    background: var(--bg);
+  }
+  /* 편집 가능 셀 (이번 빌드는 표시만, 클릭 시 미래 편집) */
+  .sheet-table td.editable {
+    background: var(--surface);
+    cursor: text;
+  }
+  /* 모드 배지 */
+  .sheet-table td.mode-sf { color: var(--accent); }
+  .sheet-table td.mode-ag { color: var(--green); }
+  /* 손익 */
+  .sheet-table td.pnl-pos { color: var(--green); }
+  .sheet-table td.pnl-neg { color: var(--red); }
+  /* 부스트 ON */
+  .sheet-table td.boost-on { 
+    color: var(--accent); 
+    font-weight: 700;
+  }
+  /* 빈 셀 */
+  .sheet-table td.empty { color: var(--text-faint); }
+  
+  /* 시트뷰 요약 영역 */
+  .sheet-summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .sheet-summary-cell {
+    background: var(--surface-2);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .sheet-summary-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-bottom: 3px;
+  }
+  .sheet-summary-value {
+    font-size: 16px;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+  }
   /* Today sell summary items */
   .today-sell-item {
     background: var(--bg); border: 1px solid var(--border-lite);
@@ -600,6 +696,7 @@
   
   <div class="tab-bar">
     <button class="tab-btn active" data-tab="dashboard">📊 대시</button>
+    <button class="tab-btn" data-tab="sheetview">📋 시트뷰</button>
     <button class="tab-btn" data-tab="today">오늘</button>
     <button class="tab-btn" data-tab="positions">보유 <span class="badge" id="posBadge" style="display:none;">0</span></button>
     <button class="tab-btn" data-tab="sells">매도 <span class="badge" id="sellBadge" style="display:none;">0</span></button>
@@ -613,6 +710,28 @@
   <div class="tab-content active" id="tab-dashboard">
     <div id="dashboardTabBody">
       <!-- renderDashboardTab()으로 동적 렌더링 -->
+    </div>
+  </div>
+  
+  <!-- ====================================
+       SHEET VIEW TAB - 시트 표 형식 재현
+       ==================================== -->
+  <div class="tab-content" id="tab-sheetview" style="display:none;">
+    <div class="panel" id="sheetSummaryPanel">
+      <div class="panel-title">현재 자산 요약</div>
+      <div id="sheetSummary">
+        <!-- buildSheetView()로 동적 렌더링 -->
+      </div>
+    </div>
+    
+    <div class="panel" style="padding:0; overflow:hidden;">
+      <div style="padding:12px 14px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-lite);">
+        <div class="panel-title" style="margin:0;">거래일별 시트</div>
+        <button class="icon-btn" id="sheetRefreshBtn" style="font-size:11px; padding:4px 10px;">↻ 새로고침</button>
+      </div>
+      <div class="sheet-table-container" id="sheetTableContainer">
+        <!-- renderSheetView()로 동적 렌더링 -->
+      </div>
     </div>
   </div>
   
@@ -3425,11 +3544,16 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // 대시보드 탭이면 렌더
     if (target === 'dashboard') {
       renderDashboardTab();
+    } else if (target === 'sheetview') {
+      renderSheetView();
     } else {
       renderAll();
     }
   });
 });
+
+// 시트뷰 새로고침 버튼
+document.getElementById('sheetRefreshBtn')?.addEventListener('click', renderSheetView);
 
 // ====================================================
 // 폼 상태 저장
@@ -5025,6 +5149,317 @@ function renderDashboard(targetId = 'dashboardBody') {
 }
 
 // 대시보드 탭 렌더 (탭 클릭 시)
+// ====================================================
+// 시트뷰 - 시트 표 형식 재현
+// ====================================================
+
+// 거래일별 시트 행 생성
+// 기존 positions + history 데이터를 시트 표 형식으로 변환
+function buildSheetRows() {
+  const positions = ACC.get('positions', []);
+  const history = ACC.get('history', []);
+  const formState = ACC.get('formState', {});
+  const todayStr = fmtDate(new Date());
+  
+  // 1. 거래일별 그룹화 (날짜를 키로)
+  const dateMap = {};
+  
+  // 매수 시점 추가 (매수일)
+  for (const p of positions) {
+    if (!p.buyDate) continue;
+    if (!dateMap[p.buyDate]) {
+      dateMap[p.buyDate] = { date: p.buyDate, buys: [], sells: [] };
+    }
+    dateMap[p.buyDate].buys.push(p);
+  }
+  
+  // 매도 시점 추가 (매도일)
+  for (const h of history) {
+    if (h.type !== 'SELL_TARGET' && h.type !== 'SELL_EXPIRE') continue;
+    if (!h.date) continue;
+    if (!dateMap[h.date]) {
+      dateMap[h.date] = { date: h.date, buys: [], sells: [] };
+    }
+    dateMap[h.date].sells.push(h);
+  }
+  
+  // 미체결 매수 기록 (BUY_SKIP)
+  for (const h of history) {
+    if (h.type !== 'BUY_SKIP') continue;
+    if (!h.date) continue;
+    if (!dateMap[h.date]) {
+      dateMap[h.date] = { date: h.date, buys: [], sells: [] };
+    }
+    dateMap[h.date].skipped = dateMap[h.date].skipped || [];
+    dateMap[h.date].skipped.push(h);
+  }
+  
+  // 매수 history (BUY)
+  for (const h of history) {
+    if (h.type !== 'BUY') continue;
+    if (!h.date) continue;
+    if (!dateMap[h.date]) {
+      dateMap[h.date] = { date: h.date, buys: [], sells: [] };
+    }
+    // history.BUY가 있는데 positions에 같은 posId 없으면 (이미 매도된 거) 추가 매수 정보
+    const existingBuy = dateMap[h.date].buys.find(b => b.id === h.posId);
+    if (!existingBuy) {
+      dateMap[h.date].buys.push({
+        ...h,
+        buyDate: h.date,
+        buyPrice: h.fillPrice,
+        sellTarget: h.sellTarget,
+        expireDate: h.expireDate,
+        boosted: h.boosted,
+        tier: h.tier,
+      });
+    }
+  }
+  
+  // 2. 날짜 순 정렬 (오래된 → 최신, 누적 계산 위해)
+  const dates = Object.keys(dateMap).sort();
+  
+  // 3. 각 행마다 시트 컬럼 계산
+  const rows = [];
+  let cumulativeRealized = 0;
+  let lastSeason = 0;
+  let currentTier = 0;
+  let peakPrice = parseFloat(formState.peakPrice) || 0;
+  let prevSeason = null;
+  
+  for (let i = 0; i < dates.length; i++) {
+    const d = dates[i];
+    const data = dateMap[d];
+    
+    // 그 날의 거래 정보
+    const buy = data.buys[0];  // 그 날 매수 (있다면)
+    const sell = data.sells[0];  // 그 날 매도 (있다면)
+    const skip = data.skipped?.[0];  // 미체결 매수
+    
+    // 시즌, 주차 (대표 매수에서)
+    const season = buy?.season || sell?.season || lastSeason || 1;
+    if (season !== lastSeason && lastSeason !== 0) {
+      // 시즌 변경
+    }
+    lastSeason = season;
+    
+    // 모드
+    const mode = buy?.mode || sell?.mode || '-';
+    
+    // 매수 정보 (있으면)
+    const buyData = buy || skip || {};
+    const orderPrice = buyData.orderPrice || buyData.bidPrice;
+    const closePrice = buy?.buyPrice || skip?.closePrice;  // 그 날 종가 = 매수가 또는 미체결 종가
+    
+    // 매도 정보 (있으면)
+    const sellData = sell || {};
+    
+    // 누적 계산
+    if (sell?.realizedPnl) {
+      cumulativeRealized += sell.realizedPnl;
+    }
+    
+    // 거래일수 (R): 매수일 ~ 매도일 (또는 오늘)
+    let dayCount = '';
+    if (buy?.buyDate) {
+      const startDate = parseDate(buy.buyDate);
+      const endDate = sell?.date ? parseDate(sell.date) : new Date();
+      const days = tradingDaysBetween(startDate, endDate);
+      dayCount = days;
+    }
+    
+    // 보유 잔고 (AB): 청산되지 않은 포지션의 수량
+    const openPositions = positions.filter(p => 
+      (p.status === 'open' || !p.status) && 
+      p.buyDate <= d
+    );
+    const holding = openPositions.reduce((s, p) => s + p.qty, 0);
+    
+    // 시즌 변경 표시
+    const isSeasonStart = prevSeason !== null && season !== prevSeason;
+    prevSeason = season;
+    
+    rows.push({
+      date: d,
+      season: season,
+      week: buy?.week || '',
+      rsi: buy?.rsi || '',
+      mode: mode,
+      seed: buyData.seed || (buyData.bidPrice * buyData.qty) || '',
+      orderPrice: orderPrice,
+      closePrice: closePrice,
+      sellTarget: buyData.sellTarget,
+      expireDate: buyData.expireDate,
+      dayCount: dayCount,
+      buyFill: buy?.buyPrice || buy?.fillPrice,
+      qty: buyData.qty,
+      buyAmount: buyData.qty && (buy?.buyPrice || buy?.fillPrice) 
+        ? Math.round((buy?.buyPrice || buy?.fillPrice) * buyData.qty) 
+        : '',
+      sellDate: sell?.date,
+      sellFill: sell?.exitPrice,
+      sellAmount: sell?.exitPrice && sell?.qty 
+        ? Math.round(sell.exitPrice * sell.qty) 
+        : '',
+      holding: holding,
+      realizedPnl: sell?.realizedPnl,
+      cumulativeRealized: cumulativeRealized,
+      boosted: buyData.boosted,
+      tier: buyData.tier,
+      skipped: !!skip,
+      isSeasonStart: isSeasonStart,
+    });
+  }
+  
+  return rows.reverse();  // 최신이 위로
+}
+
+// 거래일 사이 일수 계산 (휴일 제외)
+function tradingDaysBetween(start, end) {
+  if (!start || !end) return 0;
+  let count = 0;
+  const d = new Date(start);
+  while (d < end) {
+    d.setDate(d.getDate() + 1);
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) count++;
+  }
+  return count;
+}
+
+// 한국식 날짜 표시 (24.09.19.(목))
+function formatSheetDate(isoDate) {
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return isoDate || '';
+  const [y, m, d] = isoDate.split('-');
+  const yy = y.slice(2);
+  const dateObj = new Date(isoDate);
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+  const dow = dayNames[dateObj.getDay()];
+  return `${yy}.${m}.${d}.(${dow})`;
+}
+
+// 시트뷰 렌더링
+function renderSheetView() {
+  const rows = buildSheetRows();
+  const container = document.getElementById('sheetTableContainer');
+  if (!container) return;
+  
+  // 요약 영역
+  renderSheetSummary();
+  
+  if (rows.length === 0) {
+    container.innerHTML = '<div class="empty-list" style="padding:30px; text-align:center;">시트 데이터 없음 (시트 이식 필요)</div>';
+    return;
+  }
+  
+  // 표 생성
+  const headers = [
+    '날짜', '시즌', '주차', 'RSI', '모드', '1회시드', '매수주문가', '종가', '매도목표가', '손절예정일',
+    'D', '매수체결', '수량', '매수대금', '매도일', '매도체결', '매도대금', '보유',
+    '실현손익', '누적실현', '티어', '부스트'
+  ];
+  
+  let html = '<table class="sheet-table"><thead><tr>';
+  for (const h of headers) {
+    html += `<th>${h}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+  
+  for (const r of rows) {
+    const rowClass = r.isSeasonStart ? 'season-start' : '';
+    html += `<tr class="${rowClass}">`;
+    html += `<td>${formatSheetDate(r.date)}</td>`;
+    html += `<td class="computed">${r.season || '-'}</td>`;
+    html += `<td class="computed">${r.week || '-'}</td>`;
+    html += `<td class="computed">${r.rsi ? Number(r.rsi).toFixed(2) : '-'}</td>`;
+    html += `<td class="${r.mode === 'SF' ? 'mode-sf' : r.mode === 'AG' ? 'mode-ag' : 'computed'}">${r.mode || '-'}</td>`;
+    html += `<td class="computed">${r.seed ? '$' + Math.round(r.seed).toLocaleString() : '-'}</td>`;
+    html += `<td class="computed">${r.orderPrice ? '$' + Number(r.orderPrice).toFixed(2) : '-'}</td>`;
+    html += `<td class="editable">${r.closePrice ? Number(r.closePrice).toFixed(2) : '-'}</td>`;
+    html += `<td class="computed">${r.sellTarget ? '$' + Number(r.sellTarget).toFixed(2) : '-'}</td>`;
+    html += `<td class="computed">${r.expireDate ? formatSheetDate(r.expireDate) : '-'}</td>`;
+    html += `<td class="computed">${r.dayCount !== '' ? r.dayCount : '-'}</td>`;
+    html += `<td class="editable">${r.buyFill ? '$' + Number(r.buyFill).toFixed(2) : '-'}</td>`;
+    html += `<td class="editable">${r.qty || '-'}</td>`;
+    html += `<td class="computed">${r.buyAmount ? '$' + r.buyAmount.toLocaleString() : '-'}</td>`;
+    html += `<td class="editable">${r.sellDate ? formatSheetDate(r.sellDate) : '-'}</td>`;
+    html += `<td class="editable">${r.sellFill ? '$' + Number(r.sellFill).toFixed(2) : '-'}</td>`;
+    html += `<td class="computed">${r.sellAmount ? '$' + r.sellAmount.toLocaleString() : '-'}</td>`;
+    html += `<td class="computed">${r.holding || '-'}</td>`;
+    const pnlCls = r.realizedPnl > 0 ? 'pnl-pos' : r.realizedPnl < 0 ? 'pnl-neg' : 'computed';
+    html += `<td class="${pnlCls}">${r.realizedPnl != null && r.realizedPnl !== 0 ? (r.realizedPnl >= 0 ? '+$' : '-$') + Math.abs(r.realizedPnl).toFixed(0) : '-'}</td>`;
+    const cumCls = r.cumulativeRealized > 0 ? 'pnl-pos' : r.cumulativeRealized < 0 ? 'pnl-neg' : 'computed';
+    html += `<td class="${cumCls}">${r.cumulativeRealized ? (r.cumulativeRealized >= 0 ? '+$' : '-$') + Math.abs(r.cumulativeRealized).toFixed(0) : '$0'}</td>`;
+    html += `<td class="computed">${r.tier || '-'}</td>`;
+    html += `<td class="${r.boosted ? 'boost-on' : 'computed'}">${r.boosted ? '🚀 ON' : 'OFF'}</td>`;
+    html += '</tr>';
+  }
+  
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+// 시트뷰 상단 요약
+function renderSheetSummary() {
+  const formState = ACC.get('formState', {});
+  const ia = parseFloat(formState.ia) || 0;
+  const cash = parseFloat(formState.cash) || 0;
+  const prevClose = parseFloat(formState.prevClose) || 0;
+  
+  const positions = ACC.get('positions', []).filter(p => p.status === 'open' || !p.status);
+  const evalAmt = positions.reduce((s, p) => s + (prevClose * p.qty), 0);
+  const totalAsset = cash + evalAmt;
+  
+  const history = ACC.get('history', []);
+  const sells = history.filter(h => h.type === 'SELL_TARGET' || h.type === 'SELL_EXPIRE');
+  const totalRealized = sells.reduce((s, h) => s + (h.realizedPnl || 0), 0);
+  
+  // 평가손익 = 보유 포지션의 (현재가 - 매수가) × 수량
+  const unrealized = positions.reduce((s, p) => s + ((prevClose - p.buyPrice) * p.qty), 0);
+  
+  const evalRate = ia > 0 ? (unrealized / ia * 100) : 0;
+  const returnRate = ia > 0 ? (totalRealized / ia * 100) : 0;
+  
+  const summaryHtml = `
+    <div class="sheet-summary-grid">
+      <div class="sheet-summary-cell">
+        <div class="sheet-summary-label">누적 투자금 (IA)</div>
+        <div class="sheet-summary-value">$${Math.round(ia).toLocaleString()}</div>
+      </div>
+      <div class="sheet-summary-cell">
+        <div class="sheet-summary-label">평가손익</div>
+        <div class="sheet-summary-value ${unrealized >= 0 ? 'pnl-positive' : 'pnl-negative'}">
+          ${unrealized >= 0 ? '+' : ''}$${Math.round(unrealized).toLocaleString()}
+        </div>
+      </div>
+      <div class="sheet-summary-cell">
+        <div class="sheet-summary-label">평가손익률</div>
+        <div class="sheet-summary-value ${evalRate >= 0 ? 'pnl-positive' : 'pnl-negative'}">
+          ${evalRate >= 0 ? '+' : ''}${evalRate.toFixed(2)}%
+        </div>
+      </div>
+      <div class="sheet-summary-cell">
+        <div class="sheet-summary-label">실현손익</div>
+        <div class="sheet-summary-value ${totalRealized >= 0 ? 'pnl-positive' : 'pnl-negative'}">
+          ${totalRealized >= 0 ? '+' : ''}$${Math.round(totalRealized).toLocaleString()}
+        </div>
+      </div>
+      <div class="sheet-summary-cell">
+        <div class="sheet-summary-label">총자산</div>
+        <div class="sheet-summary-value">$${Math.round(totalAsset).toLocaleString()}</div>
+      </div>
+      <div class="sheet-summary-cell">
+        <div class="sheet-summary-label">수익률</div>
+        <div class="sheet-summary-value ${returnRate >= 0 ? 'pnl-positive' : 'pnl-negative'}">
+          ${returnRate >= 0 ? '+' : ''}${returnRate.toFixed(2)}%
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.getElementById('sheetSummary').innerHTML = summaryHtml;
+}
+
 function renderDashboardTab() {
   renderDashboard('dashboardTabBody');
 }
