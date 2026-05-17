@@ -939,9 +939,259 @@ function init() {
   document.getElementById('minStockPct').value = state.settings.minStockPct;
 
   refresh();
+  initFirebaseAuth();
 }
 
 init();
+
+// ============================================================
+//  ★ Firebase 동기화 (signInWithRedirect 방식 - 모든 환경 호환)
+// ============================================================
+const FIRESTORE_COLLECTION = 'widae_users';
+const SYNC_STATE = { enabled: false, lastSyncedAt: null, unsubscribe: null };
+
+function getUserDocRef() {
+  if (!window._fbUser || !window._fbDb) return null;
+  return window._fbDb.collection(FIRESTORE_COLLECTION).doc(window._fbUser.uid);
+}
+function getDeviceLabel() {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad/i.test(ua)) return 'iPhone';
+  if (/Android/i.test(ua)) return 'Android';
+  if (/Mac/i.test(ua)) return 'Mac';
+  if (/Windows/i.test(ua)) return 'Windows';
+  return 'Web';
+}
+
+async function uploadToFirebase() {
+  if (!window._fbUser || !window._fbDb) return false;
+  setSyncStatus('syncing');
+  try {
+    const data = localStorage.getItem(STORAGE_KEY) || '';
+    await getUserDocRef().set({
+      data, updatedAt: firebase.firestore.FieldValue.serverTimestamp(), device: getDeviceLabel()
+    }, { merge: true });
+    SYNC_STATE.lastSyncedAt = new Date();
+    setSyncStatus('synced');
+    return true;
+  } catch (e) {
+    setSyncStatus('error', e.message);
+    return false;
+  }
+}
+
+async function downloadFromFirebase() {
+  if (!window._fbUser || !window._fbDb) return false;
+  setSyncStatus('syncing');
+  try {
+    const doc = await getUserDocRef().get();
+    if (!doc.exists || !doc.data().data) return await uploadToFirebase();
+    _origSetItem(STORAGE_KEY, doc.data().data);
+    state = loadState();
+    SYNC_STATE.lastSyncedAt = doc.data().updatedAt?.toDate?.() || new Date();
+    setSyncStatus('synced');
+    return true;
+  } catch (e) {
+    setSyncStatus('error', e.message);
+    return false;
+  }
+}
+
+function startRealtimeSync() {
+  if (!window._fbUser || !window._fbDb) return;
+  if (SYNC_STATE.unsubscribe) SYNC_STATE.unsubscribe();
+  let isFirst = true;
+  SYNC_STATE.unsubscribe = getUserDocRef().onSnapshot(
+    { includeMetadataChanges: true },
+    (doc) => {
+      if (isFirst) { isFirst = false; return; }
+      if (doc.metadata.hasPendingWrites) return;
+      if (doc.exists && doc.data().data) {
+        const cloudData = doc.data().data;
+        if (cloudData !== localStorage.getItem(STORAGE_KEY)) {
+          _origSetItem(STORAGE_KEY, cloudData);
+          state = loadState(); refresh();
+          showToast('다른 기기에서 동기화됨', 'success');
+        }
+      }
+    },
+    (err) => setSyncStatus('error', err.message)
+  );
+}
+
+// localStorage 훅
+const _origSetItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = function(key, value) {
+  _origSetItem(key, value);
+  if (key === STORAGE_KEY) scheduleUpload();
+};
+localStorage.removeItem = function(key) {
+  localStorage.removeItem.toString; // pass
+  _origSetItem.call(localStorage, key, null);
+  const orig = localStorage.removeItem._orig;
+  if (orig) orig(key);
+  if (key === STORAGE_KEY) scheduleUpload();
+};
+
+let _uploadTimer = null;
+function scheduleUpload() {
+  if (!SYNC_STATE.enabled) return;
+  setSyncStatus('pending');
+  if (_uploadTimer) clearTimeout(_uploadTimer);
+  _uploadTimer = setTimeout(uploadToFirebase, 1500);
+}
+
+function setSyncStatus(status, errMsg) {
+  const btn = document.getElementById('loginBtn');
+  const label = document.getElementById('loginBtnLabel');
+  if (!btn || !label) return;
+  if (!SYNC_STATE.enabled) {
+    btn.className = 'login-btn';
+    label.innerHTML = '&#128272; 로그인';
+    btn.title = '클릭하여 구글 계정으로 동기화';
+    return;
+  }
+  const name = (window._fbUser && (window._fbUser.displayName || window._fbUser.email || '').split(/[\s@]/)[0]) || '사용자';
+  if (status === 'syncing' || status === 'pending') {
+    btn.className = 'login-btn logged-in syncing';
+    btn.title = '동기화 중...';
+  } else if (status === 'error') {
+    btn.className = 'login-btn logged-in error';
+    btn.title = '동기화 오류: ' + (errMsg || '');
+  } else {
+    btn.className = 'login-btn logged-in';
+    btn.title = '동기화: ' + (SYNC_STATE.lastSyncedAt ? SYNC_STATE.lastSyncedAt.toLocaleTimeString() : '-');
+  }
+  label.innerHTML = '<span class="sync-dot"></span>' + name;
+}
+
+async function _afterLogin(user) {
+  window._fbUser = user;
+  SYNC_STATE.enabled = true;
+  const doc = await getUserDocRef().get();
+  const localData = localStorage.getItem(STORAGE_KEY);
+  const hasLocal = localData && localData.length > 10;
+  const hasCloud = doc.exists && doc.data() && doc.data().data && doc.data().data.length > 10;
+  if (hasCloud && hasLocal && doc.data().data !== localData) {
+    const t = doc.data().updatedAt && doc.data().updatedAt.toDate ? doc.data().updatedAt.toDate().toLocaleString() : '-';
+    const d = doc.data().device || '?';
+    const lines = [
+      '클라우드에 데이터가 있습니다.',
+      '',
+      '클라우드: ' + d + ' / ' + t,
+      '현재 기기: ' + getDeviceLabel(),
+      '',
+      '[확인] 클라우드를 이 기기에 적용',
+      '[취소] 이 기기를 클라우드에 업로드'
+    ];
+    if (confirm(lines.join('\n'))) {
+      await downloadFromFirebase(); refresh();
+    } else {
+      await uploadToFirebase();
+    }
+  } else if (hasCloud) {
+    await downloadFromFirebase(); refresh();
+  } else {
+    await uploadToFirebase();
+  }
+  startRealtimeSync();
+  setSyncStatus('synced');
+  showToast('구글 동기화 활성화됨', 'success');
+}
+
+// ★ 리다이렉트 방식 로그인 (팝업 차단 없음, 모든 환경 호환)
+function loginWithGoogle() {
+  if (!window._fbEnabled) {
+    alert('Firebase 초기화 실패. 광고 차단기를 끄거나 새로고침 후 시도하세요.');
+    return;
+  }
+  showToast('구글 로그인 페이지로 이동...', 'success');
+  const provider = new firebase.auth.GoogleAuthProvider();
+  window._fbAuth.signInWithRedirect(provider);
+}
+
+// 리다이렉트 복귀 후 처리
+async function handleRedirectResult() {
+  if (!window._fbEnabled) return;
+  try {
+    const result = await window._fbAuth.getRedirectResult();
+    if (result && result.user) {
+      await _afterLogin(result.user);
+    }
+  } catch (e) {
+    console.error('[auth] redirect 결과 오류:', e.code, e.message);
+    if (e.code === 'auth/unauthorized-domain') {
+      const lines = [
+        '이 도메인이 Firebase에 미승인 상태입니다.',
+        '',
+        'Firebase 콘솔 -> Authentication -> Settings',
+        '-> 승인된 도메인 -> 추가:',
+        location.hostname
+      ];
+      alert(lines.join('\n'));
+    }
+  }
+}
+
+async function logoutFromFirebase() {
+  const lines = [
+    '로그아웃하시겠습니까?',
+    '데이터는 이 기기에 남고 동기화만 중지됩니다.'
+  ];
+  if (!confirm(lines.join('\n'))) return;
+  if (SYNC_STATE.unsubscribe) { SYNC_STATE.unsubscribe(); SYNC_STATE.unsubscribe = null; }
+  await window._fbAuth.signOut();
+  window._fbUser = null;
+  SYNC_STATE.enabled = false;
+  setSyncStatus('logged-out');
+  showToast('로그아웃됨', 'success');
+}
+
+function onLoginBtnClick() {
+  if (SYNC_STATE.enabled) {
+    const lines = [
+      '동기화 중 (' + (window._fbUser && window._fbUser.email || '') + ')',
+      '',
+      '1 - 지금 동기화 (수동 업로드)',
+      '2 - 클라우드에서 다운로드',
+      '3 - 로그아웃',
+      '4 - 취소'
+    ];
+    const c = prompt(lines.join('\n'), '1');
+    if (c === '1') uploadToFirebase().then(() => showToast('동기화 완료', 'success'));
+    else if (c === '2') {
+      if (confirm('클라우드 데이터로 이 기기를 덮어씁니다. 계속할까요?'))
+        downloadFromFirebase().then(() => refresh());
+    }
+    else if (c === '3') logoutFromFirebase();
+  } else {
+    loginWithGoogle();
+  }
+}
+
+function initFirebaseAuth() {
+  if (!window._fbEnabled) return;
+  // 리다이렉트 복귀 처리
+  handleRedirectResult();
+  // 이미 로그인된 사용자 복원
+  window._fbAuth.onAuthStateChanged(function(user) {
+    if (user) {
+      window._fbUser = user;
+      SYNC_STATE.enabled = true;
+      setSyncStatus('synced');
+      startRealtimeSync();
+    } else {
+      window._fbUser = null;
+      SYNC_STATE.enabled = false;
+      setSyncStatus('logged-out');
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var btn = document.getElementById('loginBtn');
+  if (btn) btn.addEventListener('click', onLoginBtnClick);
+});
 
 </script>
 </body>
