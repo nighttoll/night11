@@ -3702,6 +3702,9 @@ document.getElementById('resetCurrentAccount').addEventListener('click', () => {
   localStorage.removeItem(`dongpa_acc:${currentId}:compoundCounter`);
   localStorage.removeItem(`dongpa_acc:${currentId}:pendingSeedAdd`);
   localStorage.removeItem(`dongpa_acc:${currentId}:lastSheetUrl`);
+  // dailyRows 관련 초기화
+  localStorage.removeItem(`dongpa_acc:${currentId}:dailyRows`);
+  localStorage.removeItem(`dongpa_acc:${currentId}:dailyMigrated`);
   
   console.log(`[reset] "${accName}" 계좌 초기화: ${keysToRemove.length}개 키 삭제`);
   
@@ -5150,6 +5153,262 @@ function renderDashboard(targetId = 'dashboardBody') {
 
 // 대시보드 탭 렌더 (탭 클릭 시)
 // ====================================================
+// dailyRows: 날짜 행 기반 데이터 구조 (B방향)
+// ====================================================
+// 구조:
+// acc:{id}:dailyRows = [
+//   {
+//     date: 'YYYY-MM-DD',   // 거래일
+//     close: 73.5,           // 종가
+//     rsi: 47.2,             // RSI (없으면 null)
+//     mode: 'AG',            // 모드 (SF/AG)
+//     buy: {                 // 매수 (없으면 null)
+//       orderPrice, fillPrice, qty, boosted, tier, seed
+//     },
+//     sell: {                // 매도 (없으면 null)
+//       exitPrice, qty, type, buyDate, buyPrice
+//     },
+//     skipped: {             // 미체결 매수 (없으면 null)
+//       orderPrice, qty, boosted, tier
+//     },
+//     ia: 5000,              // 그날 IA
+//     cash: 4473,            // 예수금
+//     evalAmt: 527,          // 평가금 (종가 × 보유수량)
+//     totalAsset: 5000,      // 총자산
+//     realizedPnl: 0,        // 당일 실현손익
+//     cumulativeRealized: 68,// 누적 실현손익
+//     holding: 15,           // 보유 수량 (그날 기준)
+//     boosterOn: false,      // 부스트 상태
+//     peakPrice: 35.12,      // 전고점
+//     unrealizedPnl: 0,      // 평가손익
+//     pendingBuy: null,      // 오늘 LOC 매수 등록 (다음날 체결 판정)
+//   }
+// ]
+//
+// 핵심 원칙:
+// - 매수/매도 없는 날도 close, ia, cash 등 기록
+// - 한 행 수정 → 이후 행 연쇄 재계산
+// - 기존 positions/history는 백업으로 유지
+
+// dailyRows 저장/읽기 헬퍼
+function getDailyRows() {
+  return ACC.get('dailyRows', []);
+}
+
+function setDailyRows(rows) {
+  // 날짜 오름차순 정렬 보장
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  ACC.set('dailyRows', rows);
+}
+
+// 마지막 기록 날짜
+function getLastDailyRowDate() {
+  const rows = getDailyRows();
+  if (rows.length === 0) return null;
+  return rows[rows.length - 1].date;
+}
+
+// ====================================================
+// 마이그레이션: 기존 positions + history → dailyRows
+// ====================================================
+function migrateToDaily() {
+  // 이미 마이그레이션 됐으면 스킵
+  if (ACC.get('dailyMigrated', false)) {
+    console.log('[migrate] 이미 완료됨');
+    return false;
+  }
+  
+  const positions = ACC.get('positions', []);
+  const history = ACC.get('history', []);
+  
+  if (positions.length === 0 && history.length === 0) {
+    console.log('[migrate] 데이터 없음, 마이그레이션 스킵');
+    ACC.set('dailyMigrated', true);
+    return false;
+  }
+  
+  console.log('[migrate] 시작: positions', positions.length, '건, history', history.length, '건');
+  
+  // 1. 날짜별 이벤트 수집
+  const dateMap = {};
+  
+  const ensureDate = (d) => {
+    if (!dateMap[d]) {
+      dateMap[d] = { date: d, buys: [], sells: [], skips: [] };
+    }
+  };
+  
+  // history 순회
+  for (const h of history) {
+    if (!h.date) continue;
+    ensureDate(h.date);
+    
+    if (h.type === 'BUY') {
+      dateMap[h.date].buys.push(h);
+    } else if (h.type === 'SELL_TARGET' || h.type === 'SELL_EXPIRE') {
+      dateMap[h.date].sells.push(h);
+    } else if (h.type === 'BUY_SKIP') {
+      dateMap[h.date].skips.push(h);
+    }
+    
+    // 매수 원일자 (buyDate)도 포함
+    if (h.buyDate && h.buyDate !== h.date) {
+      ensureDate(h.buyDate);
+    }
+  }
+  
+  // positions에서 매수일 (아직 보유 중)
+  for (const p of positions) {
+    if (!p.buyDate) continue;
+    ensureDate(p.buyDate);
+    // positions의 매수는 history.BUY와 중복될 수 있어 체크
+    const alreadyIn = dateMap[p.buyDate].buys.some(h => h.posId === p.id || h.fillPrice === p.buyPrice);
+    if (!alreadyIn) {
+      dateMap[p.buyDate].buys.push({
+        id: p.id,
+        type: 'BUY',
+        date: p.buyDate,
+        mode: p.mode,
+        orderPrice: p.orderPrice || p.buyPrice,
+        fillPrice: p.buyPrice,
+        qty: p.qty,
+        boosted: p.boosted,
+        tier: p.tier,
+        seed: p.seed,
+        sellTarget: p.sellTarget,
+        expireDate: p.expireDate,
+        posId: p.id,
+      });
+    }
+  }
+  
+  // 2. 날짜 정렬
+  const dates = Object.keys(dateMap).sort();
+  if (dates.length === 0) {
+    ACC.set('dailyMigrated', true);
+    return false;
+  }
+  
+  // 3. 각 날짜마다 행 생성 (누적 계산)
+  const formState = ACC.get('formState', {});
+  let ia = parseFloat(formState.ia) || 0;
+  let cash = parseFloat(formState.cash) || 0;
+  let cumulativeRealized = 0;
+  let peakPrice = parseFloat(formState.peakPrice) || 0;
+  let boosterOn = ACC.get('boosterOn', false);
+  
+  // 현재 보유 수량 (날짜별 누적 계산용)
+  let openPositions = [];  // { buyDate, buyPrice, qty, sellTarget, expireDate, mode, boosted, tier }
+  
+  const rows = [];
+  
+  for (const d of dates) {
+    const ev = dateMap[d];
+    
+    // 그날 매수 이벤트
+    const buy = ev.buys[0] || null;  // 하루 1건 가정
+    const sell = ev.sells[0] || null;
+    const skip = ev.skips[0] || null;
+    
+    // 매도 처리 (포지션에서 제거)
+    if (sell) {
+      openPositions = openPositions.filter(p => 
+        !(p.buyPrice === sell.buyPrice && p.qty === sell.qty)
+      );
+      cumulativeRealized += (sell.realizedPnl || 0);
+    }
+    
+    // 매수 처리 (포지션 추가)
+    if (buy) {
+      openPositions.push({
+        buyDate: d,
+        buyPrice: buy.fillPrice,
+        qty: buy.qty,
+        sellTarget: buy.sellTarget,
+        expireDate: buy.expireDate,
+        mode: buy.mode,
+        boosted: buy.boosted,
+        tier: buy.tier,
+      });
+      cash -= (buy.fillPrice * buy.qty);
+    }
+    
+    // 종가: 매수가 있으면 그날 종가 = 매수체결가 (근사값)
+    // 실제 종가는 야후 or 수동 - 마이그레이션 시점엔 없음
+    const close = buy?.fillPrice || sell?.exitPrice || null;
+    
+    // 보유 수량
+    const holding = openPositions.reduce((s, p) => s + p.qty, 0);
+    
+    // 평가금
+    const evalAmt = close ? holding * close : 0;
+    
+    // 전고점
+    if (close && close > peakPrice) peakPrice = close;
+    
+    // RSI: history에서 읽어오기 (있으면)
+    const rsi = buy?.rsi || null;
+    const mode = buy?.mode || sell?.mode || 'SF';
+    
+    rows.push({
+      date: d,
+      close: close,
+      rsi: rsi,
+      mode: mode,
+      buy: buy ? {
+        orderPrice: buy.orderPrice || buy.fillPrice,
+        fillPrice: buy.fillPrice,
+        qty: buy.qty,
+        boosted: buy.boosted,
+        tier: buy.tier,
+        seed: buy.seed,
+        sellTarget: buy.sellTarget,
+        expireDate: buy.expireDate,
+      } : null,
+      sell: sell ? {
+        exitPrice: sell.exitPrice,
+        qty: sell.qty,
+        type: sell.type === 'SELL_TARGET' ? 'TARGET' : 'EXPIRE',
+        buyDate: sell.buyDate,
+        buyPrice: sell.buyPrice,
+        realizedPnl: sell.realizedPnl,
+      } : null,
+      skipped: skip ? {
+        orderPrice: skip.orderPrice,
+        qty: skip.qty,
+        boosted: skip.boosted,
+        tier: skip.tier,
+      } : null,
+      ia: ia,
+      cash: Math.round(cash),
+      evalAmt: Math.round(evalAmt),
+      totalAsset: Math.round(cash + evalAmt),
+      realizedPnl: sell?.realizedPnl || 0,
+      cumulativeRealized: Math.round(cumulativeRealized),
+      holding: holding,
+      boosterOn: boosterOn,
+      peakPrice: peakPrice,
+      unrealizedPnl: close ? Math.round(openPositions.reduce((s, p) => s + (close - p.buyPrice) * p.qty, 0)) : 0,
+    });
+  }
+  
+  setDailyRows(rows);
+  ACC.set('dailyMigrated', true);
+  
+  console.log(`[migrate] 완료: ${rows.length}개 날짜 행 생성`);
+  return true;
+}
+
+// ====================================================
+// 마이그레이션 초기화 (계정 리셋 시 플래그 제거)
+// ====================================================
+function resetDailyMigration() {
+  ACC.remove('dailyRows');
+  ACC.remove('dailyMigrated');
+  console.log('[migrate] 초기화 완료');
+}
+
+// ====================================================
 // 시트뷰 - 시트 표 형식 재현
 // ====================================================
 
@@ -5340,22 +5599,37 @@ function formatSheetDate(isoDate) {
 
 // 시트뷰 렌더링
 function renderSheetView() {
-  const rows = buildSheetRows();
+  // 마이그레이션 먼저 실행 (최초 1회)
+  const didMigrate = migrateToDaily();
+  if (didMigrate) {
+    console.log('[sheetview] 마이그레이션 완료, dailyRows 기반으로 렌더');
+  }
+  
+  const dailyRows = getDailyRows();
   const container = document.getElementById('sheetTableContainer');
   if (!container) return;
   
   // 요약 영역
   renderSheetSummary();
   
-  if (rows.length === 0) {
-    container.innerHTML = '<div class="empty-list" style="padding:30px; text-align:center;">시트 데이터 없음 (시트 이식 필요)</div>';
+  if (dailyRows.length === 0) {
+    container.innerHTML = `
+      <div style="padding:30px; text-align:center; color:var(--text-dim);">
+        <div style="font-size:14px; margin-bottom:8px;">데이터 없음</div>
+        <div style="font-size:12px; color:var(--text-faint);">
+          설정 탭에서 시트 이식 후 시트뷰를 다시 열어주세요.
+        </div>
+      </div>`;
     return;
   }
   
-  // 표 생성
+  // 최신 → 오래된 순 (화면에 최신이 위)
+  const rows = [...dailyRows].reverse();
+  
   const headers = [
-    '날짜', '시즌', '주차', 'RSI', '모드', '1회시드', '매수주문가', '종가', '매도목표가', '손절예정일',
-    'D', '매수체결', '수량', '매수대금', '매도일', '매도체결', '매도대금', '보유',
+    '날짜', 'RSI', '모드', '1회시드', '매수주문가', '종가',
+    '매도목표가', '손절예정일', 'D', '매수체결', '수량', '매수대금',
+    '매도일', '매도체결', '매도대금', '보유',
     '실현손익', '누적실현', '티어', '부스트'
   ];
   
@@ -5366,37 +5640,148 @@ function renderSheetView() {
   html += '</tr></thead><tbody>';
   
   for (const r of rows) {
-    const rowClass = r.isSeasonStart ? 'season-start' : '';
-    html += `<tr class="${rowClass}">`;
+    const buy = r.buy;
+    const sell = r.sell;
+    
+    // 거래일수 (D) 계산
+    let dayCount = '-';
+    if (buy?.fillPrice && r.date) {
+      const startDate = parseDate(r.date);
+      const endDate = sell?.exitPrice
+        ? parseDate(rows.find(x => x.sell?.buyDate === r.date)?.date || r.date)
+        : new Date();
+      dayCount = tradingDaysBetween(startDate, endDate) || '-';
+    }
+    
+    // 매도 정보 (이 매수에 대한 매도)
+    const sellRow = dailyRows.find(x =>
+      x.sell && buy && x.sell.buyDate === r.date
+    );
+    
+    // 매수대금
+    const buyAmount = buy ? Math.round((buy.fillPrice || 0) * (buy.qty || 0)) : null;
+    
+    // 매도대금
+    const sellAmount = sell ? Math.round((sell.exitPrice || 0) * (sell.qty || 0)) : null;
+    
+    const pnlCls = (r.realizedPnl || 0) > 0 ? 'pnl-pos' : (r.realizedPnl || 0) < 0 ? 'pnl-neg' : 'computed';
+    const cumCls = (r.cumulativeRealized || 0) > 0 ? 'pnl-pos' : (r.cumulativeRealized || 0) < 0 ? 'pnl-neg' : 'computed';
+    const modeCls = r.mode === 'SF' ? 'mode-sf' : r.mode === 'AG' ? 'mode-ag' : 'computed';
+    
+    html += `<tr data-date="${r.date}">`;
     html += `<td>${formatSheetDate(r.date)}</td>`;
-    html += `<td class="computed">${r.season || '-'}</td>`;
-    html += `<td class="computed">${r.week || '-'}</td>`;
-    html += `<td class="computed">${r.rsi ? Number(r.rsi).toFixed(2) : '-'}</td>`;
-    html += `<td class="${r.mode === 'SF' ? 'mode-sf' : r.mode === 'AG' ? 'mode-ag' : 'computed'}">${r.mode || '-'}</td>`;
-    html += `<td class="computed">${r.seed ? '$' + Math.round(r.seed).toLocaleString() : '-'}</td>`;
-    html += `<td class="computed">${r.orderPrice ? '$' + Number(r.orderPrice).toFixed(2) : '-'}</td>`;
-    html += `<td class="editable">${r.closePrice ? Number(r.closePrice).toFixed(2) : '-'}</td>`;
-    html += `<td class="computed">${r.sellTarget ? '$' + Number(r.sellTarget).toFixed(2) : '-'}</td>`;
-    html += `<td class="computed">${r.expireDate ? formatSheetDate(r.expireDate) : '-'}</td>`;
-    html += `<td class="computed">${r.dayCount !== '' ? r.dayCount : '-'}</td>`;
-    html += `<td class="editable">${r.buyFill ? '$' + Number(r.buyFill).toFixed(2) : '-'}</td>`;
-    html += `<td class="editable">${r.qty || '-'}</td>`;
-    html += `<td class="computed">${r.buyAmount ? '$' + r.buyAmount.toLocaleString() : '-'}</td>`;
-    html += `<td class="editable">${r.sellDate ? formatSheetDate(r.sellDate) : '-'}</td>`;
-    html += `<td class="editable">${r.sellFill ? '$' + Number(r.sellFill).toFixed(2) : '-'}</td>`;
-    html += `<td class="computed">${r.sellAmount ? '$' + r.sellAmount.toLocaleString() : '-'}</td>`;
-    html += `<td class="computed">${r.holding || '-'}</td>`;
-    const pnlCls = r.realizedPnl > 0 ? 'pnl-pos' : r.realizedPnl < 0 ? 'pnl-neg' : 'computed';
-    html += `<td class="${pnlCls}">${r.realizedPnl != null && r.realizedPnl !== 0 ? (r.realizedPnl >= 0 ? '+$' : '-$') + Math.abs(r.realizedPnl).toFixed(0) : '-'}</td>`;
-    const cumCls = r.cumulativeRealized > 0 ? 'pnl-pos' : r.cumulativeRealized < 0 ? 'pnl-neg' : 'computed';
-    html += `<td class="${cumCls}">${r.cumulativeRealized ? (r.cumulativeRealized >= 0 ? '+$' : '-$') + Math.abs(r.cumulativeRealized).toFixed(0) : '$0'}</td>`;
-    html += `<td class="computed">${r.tier || '-'}</td>`;
-    html += `<td class="${r.boosted ? 'boost-on' : 'computed'}">${r.boosted ? '🚀 ON' : 'OFF'}</td>`;
-    html += '</tr>';
+    html += `<td class="computed">${r.rsi != null ? Number(r.rsi).toFixed(2) : '-'}</td>`;
+    html += `<td class="${modeCls}">${r.mode || '-'}</td>`;
+    html += `<td class="computed">${buy?.seed ? '$' + Math.round(buy.seed).toLocaleString() : '-'}</td>`;
+    html += `<td class="computed">${buy?.orderPrice ? '$' + Number(buy.orderPrice).toFixed(2) : '-'}</td>`;
+    html += `<td class="editable" data-field="close" data-date="${r.date}">${r.close != null ? Number(r.close).toFixed(2) : '-'}</td>`;
+    html += `<td class="computed">${buy?.sellTarget ? '$' + Number(buy.sellTarget).toFixed(2) : '-'}</td>`;
+    html += `<td class="computed">${buy?.expireDate ? formatSheetDate(buy.expireDate) : '-'}</td>`;
+    html += `<td class="computed">${dayCount}</td>`;
+    html += `<td class="editable" data-field="buyFill" data-date="${r.date}">${buy?.fillPrice ? '$' + Number(buy.fillPrice).toFixed(2) : '-'}</td>`;
+    html += `<td class="editable" data-field="qty" data-date="${r.date}">${buy?.qty || '-'}</td>`;
+    html += `<td class="computed">${buyAmount ? '$' + buyAmount.toLocaleString() : '-'}</td>`;
+    html += `<td class="editable" data-field="sellDate" data-date="${r.date}">${sell ? formatSheetDate(r.date) : (sellRow ? formatSheetDate(sellRow.date) : '-')}</td>`;
+    html += `<td class="editable" data-field="sellFill" data-date="${r.date}">${sell?.exitPrice ? '$' + Number(sell.exitPrice).toFixed(2) : '-'}</td>`;
+    html += `<td class="computed">${sellAmount ? '$' + sellAmount.toLocaleString() : '-'}</td>`;
+    html += `<td class="computed">${r.holding != null ? r.holding : '-'}</td>`;
+    html += `<td class="${pnlCls}">${r.realizedPnl ? (r.realizedPnl >= 0 ? '+$' : '-$') + Math.abs(r.realizedPnl).toFixed(0) : '-'}</td>`;
+    html += `<td class="${cumCls}">${r.cumulativeRealized != null ? (r.cumulativeRealized >= 0 ? '+$' : '-$') + Math.abs(r.cumulativeRealized).toFixed(0) : '-'}</td>`;
+    html += `<td class="computed">${buy?.tier || '-'}</td>`;
+    html += `<td class="${r.boosterOn ? 'boost-on' : 'computed'}">${r.boosterOn ? '🚀 ON' : 'OFF'}</td>`;
+    html += `</tr>`;
   }
   
   html += '</tbody></table>';
   container.innerHTML = html;
+  
+  // 편집 가능 셀 클릭 이벤트 (이번 빌드: 클릭 시 안내만, 다음 빌드에서 편집 구현)
+  container.querySelectorAll('td.editable').forEach(td => {
+    td.addEventListener('click', () => {
+      const field = td.dataset.field;
+      const date = td.dataset.date;
+      const current = td.textContent.trim().replace(/[$,+]/g, '');
+      
+      // 이미 편집 중이면 스킵
+      if (td.querySelector('input')) return;
+      
+      // 인라인 입력창 생성
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = current === '-' ? '' : current;
+      input.style.cssText = `
+        width: 70px; padding: 2px 4px;
+        background: var(--surface-2); color: var(--text);
+        border: 1px solid var(--accent); border-radius: 3px;
+        font-family: 'JetBrains Mono', monospace; font-size: 10px;
+        outline: none;
+      `;
+      
+      const originalText = td.textContent;
+      td.textContent = '';
+      td.appendChild(input);
+      input.focus();
+      input.select();
+      
+      const cancelEdit = () => {
+        td.textContent = originalText;
+      };
+      
+      const confirmEdit = () => {
+        const newVal = input.value.trim();
+        if (!newVal || newVal === current) {
+          cancelEdit();
+          return;
+        }
+        
+        const numVal = parseFloat(newVal);
+        if (isNaN(numVal)) {
+          cancelEdit();
+          return;
+        }
+        
+        // dailyRows 업데이트
+        const rows = getDailyRows();
+        const rowIdx = rows.findIndex(r => r.date === date);
+        if (rowIdx < 0) { cancelEdit(); return; }
+        
+        // 필드별 업데이트
+        const row = { ...rows[rowIdx] };
+        if (field === 'close') {
+          row.close = numVal;
+        } else if (field === 'buyFill') {
+          if (row.buy) row.buy = { ...row.buy, fillPrice: numVal };
+        } else if (field === 'qty') {
+          if (row.buy) row.buy = { ...row.buy, qty: Math.round(numVal) };
+        } else if (field === 'sellFill') {
+          if (row.sell) row.sell = { ...row.sell, exitPrice: numVal };
+        } else if (field === 'sellDate') {
+          // 매도일은 다른 행으로 이동하는 복잡한 작업 → 다음 빌드
+          cancelEdit();
+          return;
+        }
+        
+        rows[rowIdx] = row;
+        
+        // 연쇄 재계산: 수정된 행부터 이후 모든 행
+        recalcFromRow(rows, rowIdx);
+        
+        setDailyRows(rows);
+        
+        // 화면 업데이트
+        renderSheetView();
+        renderSheetSummary();
+        
+        console.log(`[edit] ${date} / ${field} = ${numVal} → 연쇄 재계산 완료`);
+      };
+      
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') confirmEdit();
+        if (e.key === 'Escape') cancelEdit();
+      });
+      input.addEventListener('blur', confirmEdit);
+    });
+  });
 }
 
 // 시트뷰 상단 요약
@@ -5458,6 +5843,311 @@ function renderSheetSummary() {
   `;
   
   document.getElementById('sheetSummary').innerHTML = summaryHtml;
+}
+
+// ====================================================
+// 누락일 자동 처리
+// ====================================================
+// 앱 시작 시 마지막 기록일 ~ 오늘 사이 빠진 거래일을 야후에서 받아
+// 자동으로 체결 판정 + dailyRows에 추가
+async function fillMissingDays() {
+  const lastDate = getLastDailyRowDate();
+  if (!lastDate) return;  // 데이터 없으면 스킵
+  
+  const todayStr = fmtDate(new Date());
+  if (lastDate >= todayStr) return;  // 최신이면 스킵
+  
+  // 빠진 거래일 목록 계산
+  const missing = getMissingTradingDays(lastDate, todayStr);
+  if (missing.length === 0) return;
+  
+  console.log(`[fillMissing] 누락 거래일: ${missing.length}건 (${missing[0]} ~ ${missing[missing.length-1]})`);
+  
+  // 5일 초과면 경고만 (야후 데이터 한계)
+  if (missing.length > 5) {
+    console.warn(`[fillMissing] ${missing.length}일 누락 - 야후는 최근 5일만 제공`);
+  }
+  
+  // 야후에서 최근 종가 받기 (한 번만)
+  let closePrices = {};  // { 'YYYY-MM-DD': price }
+  try {
+    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
+      'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=10d'
+    );
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const result = data.chart.result[0];
+    const closes = result.indicators.quote[0].close;
+    const timestamps = result.timestamp;
+    for (let i = 0; i < timestamps.length; i++) {
+      if (closes[i] != null) {
+        const d = fmtDate(new Date(timestamps[i] * 1000));
+        closePrices[d] = closes[i];
+      }
+    }
+    console.log('[fillMissing] 야후 종가:', Object.keys(closePrices).join(', '));
+  } catch (e) {
+    console.warn('[fillMissing] 야후 실패:', e.message);
+    // 야후 실패 시 시트 폴백
+    try {
+      const sheetResult = await fetchClosePriceFromSheet();
+      // 시트는 어제 종가 1개만 → 어제 날짜로 매핑
+      const yesterday = missing[missing.length - 1];
+      closePrices[yesterday] = sheetResult.price;
+      console.log('[fillMissing] 시트 폴백:', yesterday, '=', sheetResult.price);
+    } catch (e2) {
+      console.warn('[fillMissing] 시트 폴백도 실패:', e2.message);
+    }
+  }
+  
+  if (Object.keys(closePrices).length === 0) {
+    console.warn('[fillMissing] 종가 데이터 없음 - 수동 입력 필요');
+    return { needManual: missing };
+  }
+  
+  // 각 누락일마다 처리
+  const rows = getDailyRows();
+  const settings = {
+    sfBuy: parseFloat(document.getElementById('set_sfBuy')?.value || 4.5) / 100,
+    sfSell: parseFloat(document.getElementById('set_sfSell')?.value || 1.8) / 100,
+    sfHold: parseInt(document.getElementById('set_sfHold')?.value || 35),
+    sfSplit: parseInt(document.getElementById('set_sfSplit')?.value || 7),
+    agBuy: parseFloat(document.getElementById('set_agBuy')?.value || 3.6) / 100,
+    agSell: parseFloat(document.getElementById('set_agSell')?.value || 3.0) / 100,
+    agHold: parseInt(document.getElementById('set_agHold')?.value || 7),
+    agSplit: parseInt(document.getElementById('set_agSplit')?.value || 8),
+    normalPct: parseFloat(document.getElementById('set_normal')?.value || 100) / 100,
+    boostPct: parseFloat(document.getElementById('set_boost')?.value || 120) / 100,
+    ddEntry: parseFloat(document.getElementById('set_ddEntry')?.value || 20) / 100,
+    ddExit: parseFloat(document.getElementById('set_ddExit')?.value || 10) / 100,
+  };
+  
+  let lastRow = rows[rows.length - 1];
+  const newRows = [];
+  
+  for (const date of missing) {
+    const close = closePrices[date];
+    if (!close) {
+      // 해당 날짜 종가 없으면 건너뜀
+      console.log(`[fillMissing] ${date} 종가 없음, 스킵`);
+      continue;
+    }
+    
+    const newRow = processOneDailyRow(date, close, lastRow, settings);
+    newRows.push(newRow);
+    lastRow = newRow;
+  }
+  
+  if (newRows.length > 0) {
+    setDailyRows([...rows, ...newRows]);
+    console.log(`[fillMissing] ${newRows.length}개 행 추가 완료`);
+  }
+  
+  return { added: newRows.length, missing: missing.length };
+}
+
+// 마지막 행 기반으로 다음 날 행 생성
+function processOneDailyRow(date, close, lastRow, settings) {
+  const mode = lastRow?.mode || 'SF';
+  const ia = lastRow?.ia || 0;
+  let cash = lastRow?.cash || 0;
+  let boosterOn = lastRow?.boosterOn || false;
+  let peakPrice = lastRow?.peakPrice || close;
+  let cumulativeRealized = lastRow?.cumulativeRealized || 0;
+  
+  // 전고점 업데이트
+  if (close > peakPrice) peakPrice = close;
+  
+  // 부스트 판정
+  const pdd = peakPrice > 0 ? (peakPrice - close) / peakPrice : 0;
+  const ddEntry = settings.ddEntry;
+  const ddExit = settings.ddExit;
+  if (!boosterOn && pdd >= ddEntry) boosterOn = true;
+  else if (boosterOn && pdd < ddExit) boosterOn = false;
+  
+  // 어제 pendingBuy가 있었다면 오늘 체결 판정
+  let buy = null;
+  let skipped = null;
+  if (lastRow?.pendingBuy) {
+    const pb = lastRow.pendingBuy;
+    if (close <= pb.orderPrice) {
+      // 체결
+      const holdDays = pb.mode === 'SF' ? settings.sfHold : settings.agHold;
+      const sellPct = pb.mode === 'SF' ? settings.sfSell : settings.agSell;
+      const buyDateObj = parseDate(pb.date || date);
+      const expireDate = fmtDate(addTradingDays(buyDateObj, holdDays));
+      
+      buy = {
+        orderPrice: pb.orderPrice,
+        fillPrice: close,
+        qty: pb.qty,
+        boosted: pb.boosted,
+        tier: pb.tier,
+        seed: pb.seed,
+        sellTarget: Math.round(close * (1 + sellPct) * 100) / 100,
+        expireDate: expireDate,
+      };
+      cash -= Math.round(close * pb.qty);
+    } else {
+      // 미체결
+      skipped = {
+        orderPrice: pb.orderPrice,
+        qty: pb.qty,
+        boosted: pb.boosted,
+        tier: pb.tier,
+        closePrice: close,
+      };
+    }
+  }
+  
+  // 보유 포지션 (간소화: lastRow 기반 추적)
+  let holding = lastRow?.holding || 0;
+  if (buy) holding += buy.qty;
+  
+  // 만료 매도 처리 (expireDate <= date)
+  let sell = null;
+  // TODO: 다음 빌드에서 구체화 (보유 포지션 목록 필요)
+  
+  // 실현손익
+  const realizedPnl = sell?.realizedPnl || 0;
+  cumulativeRealized += realizedPnl;
+  if (sell) holding -= (sell.qty || 0);
+  
+  // 평가금
+  const evalAmt = Math.round(close * holding);
+  const totalAsset = cash + evalAmt;
+  
+  // 평가손익 (간소화)
+  const unrealizedPnl = 0;  // 다음 빌드에서 정확 계산
+  
+  // 오늘 신규 LOC 매수 주문 계산
+  const split = mode === 'SF' ? settings.sfSplit : settings.agSplit;
+  const buyPct = mode === 'SF' ? settings.sfBuy : settings.agBuy;
+  const tier = (lastRow?.buy?.tier || 0) + (buy ? 0 : 0) + 1;  // 간소화
+  let pendingBuy = null;
+  
+  if (ia > 0 && tier <= split) {
+    const seedFactor = boosterOn ? settings.boostPct : settings.normalPct;
+    const seed = Math.round((ia / split) * seedFactor);
+    const orderPrice = Math.round(close * (1 - buyPct) * 100) / 100;
+    const qty = Math.floor(seed / orderPrice);
+    
+    if (qty > 0) {
+      pendingBuy = {
+        date: date,
+        mode: mode,
+        orderPrice: orderPrice,
+        qty: qty,
+        seed: seed,
+        boosted: boosterOn,
+        tier: tier,
+      };
+    }
+  }
+  
+  return {
+    date,
+    close,
+    rsi: null,  // RSI는 별도 수동 or 야후 QQQ 필요
+    mode,
+    buy: buy || null,
+    sell: sell || null,
+    skipped: skipped || null,
+    pendingBuy: pendingBuy,
+    ia,
+    cash,
+    evalAmt,
+    totalAsset,
+    realizedPnl,
+    cumulativeRealized,
+    holding,
+    boosterOn,
+    peakPrice,
+    unrealizedPnl,
+  };
+}
+
+// ====================================================
+// 연쇄 재계산: rowIdx부터 이후 모든 행 재계산
+// ====================================================
+function recalcFromRow(rows, fromIdx) {
+  // fromIdx 행부터 마지막까지 누적값 재계산
+  let cumulativeRealized = fromIdx > 0 ? (rows[fromIdx - 1].cumulativeRealized || 0) : 0;
+  let peakPrice = fromIdx > 0 ? (rows[fromIdx - 1].peakPrice || 0) : 0;
+  let holding = fromIdx > 0 ? (rows[fromIdx - 1].holding || 0) : 0;
+  let cash = fromIdx > 0 ? (rows[fromIdx - 1].cash || 0) : 0;
+  
+  for (let i = fromIdx; i < rows.length; i++) {
+    const r = rows[i];
+    const close = r.close;
+    
+    // 전고점 업데이트
+    if (close && close > peakPrice) peakPrice = close;
+    
+    // 보유 수량 업데이트
+    let rowHolding = holding;
+    if (r.buy) {
+      rowHolding += r.buy.qty;
+      cash -= Math.round((r.buy.fillPrice || 0) * (r.buy.qty || 0));
+    }
+    if (r.sell) {
+      rowHolding -= (r.sell.qty || 0);
+      const pnl = Math.round(((r.sell.exitPrice || 0) - (r.sell.buyPrice || 0)) * (r.sell.qty || 0));
+      cumulativeRealized += pnl;
+      r.realizedPnl = pnl;
+      cash += Math.round((r.sell.exitPrice || 0) * (r.sell.qty || 0));
+    } else {
+      r.realizedPnl = 0;
+    }
+    holding = rowHolding;
+    
+    // 평가금
+    const evalAmt = close ? Math.round(close * rowHolding) : r.evalAmt;
+    
+    // 부스트 재판정
+    const ddEntry = parseFloat(document.getElementById('set_ddEntry')?.value || 20) / 100;
+    const ddExit = parseFloat(document.getElementById('set_ddExit')?.value || 10) / 100;
+    let boosterOn = i > 0 ? rows[i-1].boosterOn : (r.boosterOn || false);
+    if (close && peakPrice > 0) {
+      const pdd = (peakPrice - close) / peakPrice;
+      if (!boosterOn && pdd >= ddEntry) boosterOn = true;
+      else if (boosterOn && pdd < ddExit) boosterOn = false;
+    }
+    
+    // 행 업데이트
+    rows[i] = {
+      ...r,
+      holding: rowHolding,
+      evalAmt: evalAmt,
+      totalAsset: cash + evalAmt,
+      cumulativeRealized: cumulativeRealized,
+      peakPrice: peakPrice,
+      boosterOn: boosterOn,
+      cash: cash,
+      unrealizedPnl: close ? Math.round(rowHolding * close) - Math.round(rowHolding * (r.buy?.fillPrice || close)) : 0,
+    };
+  }
+}
+
+// 두 날짜 사이의 거래일 목록 (시작일 제외, 종료일 포함)
+function getMissingTradingDays(fromDate, toDate) {
+  const result = [];
+  const d = new Date(fromDate);
+  const end = new Date(toDate);
+  
+  d.setDate(d.getDate() + 1);  // 시작일 다음날부터
+  
+  while (d <= end) {
+    const day = d.getDay();
+    const iso = fmtDate(d);
+    // 주말 제외, 공휴일은 holidaySet 사용
+    if (day !== 0 && day !== 6 && !holidaySet.has(iso)) {
+      result.push(iso);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return result;
 }
 
 function renderDashboardTab() {
@@ -5778,6 +6468,25 @@ function addYears(dateStr, years) {
   
   // 첫 화면(대시보드 탭)도 렌더
   renderDashboardTab();
+  
+  // 누락일 자동 처리 (백그라운드, 화면 렌더 후 실행)
+  setTimeout(async () => {
+    try {
+      const result = await fillMissingDays();
+      if (result?.added > 0) {
+        console.log(`[init] 누락일 ${result.added}건 자동 처리 완료`);
+        // 시트뷰 탭이 활성이면 새로고침
+        const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
+        if (activeTab === 'sheetview') renderSheetView();
+      }
+      if (result?.needManual?.length > 0) {
+        // 수동 입력 필요한 날짜가 있으면 안내
+        console.warn('[init] 수동 종가 입력 필요:', result.needManual.join(', '));
+      }
+    } catch (e) {
+      console.warn('[init] 누락일 처리 실패:', e.message);
+    }
+  }, 1500);
 })();
 </script>
 </body>
