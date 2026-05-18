@@ -535,8 +535,17 @@
   /* 손익 */
   .sheet-table td.pnl-pos { color: var(--green); }
   .sheet-table td.pnl-neg { color: var(--red); }
-  /* 부스트 ON */
-  .sheet-table td.boost-on { 
+  /* IA 갱신 셀 */
+  .ia-renew-cell {
+    background: rgba(255,200,50,0.05);
+    min-width: 70px;
+  }
+  .ia-renew-cell:hover {
+    background: rgba(255,200,50,0.15);
+  }
+  .ia-renew-cell input[type=checkbox] {
+    width: 13px; height: 13px;
+  } 
     color: var(--accent); 
     font-weight: 700;
   }
@@ -2081,7 +2090,7 @@ async function autoProcessDay() {
   
   // 1. 야후에서 오늘 종가 받기
   try {
-    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=5d';
+    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo';
     const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
     const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -2092,7 +2101,7 @@ async function autoProcessDay() {
     for (let i = closes.length - 1; i >= 0; i--) {
       if (closes[i] !== null) {
         closePrice = closes[i];
-        priceSource = fmtDate(new Date(timestamps[i] * 1000));
+        { const _pd=new Date(timestamps[i]*1000); priceSource=`${_pd.getUTCFullYear()}-${String(_pd.getUTCMonth()+1).padStart(2,'0')}-${String(_pd.getUTCDate()).padStart(2,'0')}`; }
         break;
       }
     }
@@ -3512,7 +3521,7 @@ async function fetchYahooPrice() {
   hint.textContent = '야후파이낸스 조회 중...';
   
   try {
-    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=5d';
+    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo';
     const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
     const res = await fetch(proxyUrl);
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -4540,7 +4549,7 @@ async function bulkProcessAllAccounts() {
   let closePrices = {};
   try {
     const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
-      'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=10d'
+      'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo'
     );
     const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -4549,7 +4558,7 @@ async function bulkProcessAllAccounts() {
     const closes = result.indicators.quote[0].close;
     const tss    = result.timestamp;
     for (let i = 0; i < tss.length; i++) {
-      if (closes[i] != null) closePrices[fmtDate(new Date(tss[i] * 1000))] = closes[i];
+      if (closes[i] != null) { const _d=new Date(tss[i]*1000); closePrices[`${_d.getUTCFullYear()}-${String(_d.getUTCMonth()+1).padStart(2,'0')}-${String(_d.getUTCDate()).padStart(2,'0')}`]=closes[i]; }
     }
     console.log('[bulk] 야후 종가:', Object.keys(closePrices).join(', '));
   } catch (e) {
@@ -5075,7 +5084,9 @@ function migrateToDaily() {
     const sell = ev.sells[0] ?? null;
     const skip = ev.skips[0] ?? null;
     
-    // 전고점 갱신
+    // 종가 없으면 행 생성 안 함 (휴장 또는 데이터 미비)
+    // 단, 거래 이벤트(매수/매도)가 있는 날은 종가 없어도 일단 포함
+    if (!close && !buy && !sell && !skip) continue;
     if (close && close > peakPrice) peakPrice = close;
     
     // 부스트 판정
@@ -5364,7 +5375,7 @@ function formatSheetDate(isoDate) {
 function renderSheetView() {
   // 마이그레이션 먼저 실행 (최초 1회)
   // VERSION='2' → DATA.prices+RSI 기반 전체 날짜 행 생성
-  const MIGRATE_VER = '2';
+  const MIGRATE_VER = '3'; // 종가 없는 행 제외
   if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
     ACC.remove('dailyMigrated');  // 강제 재실행
   }
@@ -5392,15 +5403,16 @@ function renderSheetView() {
     return;
   }
   
-  // 최신 → 오래된 순 (화면에 최신이 위)
-  const rows = [...dailyRows].reverse();
+  // 최신 → 오래된 순, 종가 없는 행 제외 (휴장 or 데이터 미비)
+  const rows = [...dailyRows].reverse().filter(r => r.close != null);
   
   const headers = [
     '날짜', 'RSI', '모드', '1회시드', '매수주문가', '종가✏️',
     '매도목표가', '손절예정일', 'D',
     '매수체결✏️', '수량✏️', '매수대금',
     '매도일', '매도체결✏️', '매도대금',
-    '보유', '실현손익', '누적실현', '티어', '부스트'
+    '보유', '실현손익', '누적실현', '부스트',
+    'IA갱신✏️', '시드증감✏️'
   ];
   
   let html = '<table class="sheet-table"><thead><tr>';
@@ -5454,8 +5466,28 @@ function renderSheetView() {
     html += `<td class="computed">${r.holding ?? '-'}</td>`;
     html += `<td class="${pnlCls}">${r.realizedPnl ? (r.realizedPnl >= 0 ? '+$' : '-$') + Math.abs(r.realizedPnl).toFixed(0) : '-'}</td>`;
     html += `<td class="${cumCls}">${r.cumulativeRealized ? (r.cumulativeRealized >= 0 ? '+$' : '-$') + Math.abs(r.cumulativeRealized).toFixed(0) : '-'}</td>`;
-    html += `<td class="computed">${buy?.tier ?? '-'}</td>`;
     html += `<td class="${r.boosterOn ? 'boost-on' : 'computed'}">${r.boosterOn ? '🚀' : '-'}</td>`;
+    
+    // IA 갱신 체크박스
+    const iaChecked = r.iaRenewed ? 'checked' : '';
+    const iaVal = r.iaRenewed ? `$${Math.round(r.ia).toLocaleString()}` : '-';
+    html += `<td class="ia-renew-cell" data-date="${r.date}" style="text-align:center; cursor:pointer;">
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer; justify-content:center;">
+        <input type="checkbox" class="ia-renew-check" data-date="${r.date}" ${iaChecked}
+          style="cursor:pointer; accent-color:var(--accent);">
+        <span style="font-size:9px; color:${r.iaRenewed ? 'var(--accent)' : 'var(--text-faint)'}">
+          ${r.iaRenewed ? '$' + Math.round(r.ia).toLocaleString() : ''}
+        </span>
+      </label>
+    </td>`;
+    
+    // 시드 증감액
+    const seedAdj = r.seedAdjust ?? '';
+    const seedAdjDisplay = seedAdj !== '' && seedAdj !== 0
+      ? `<span style="color:${seedAdj > 0 ? 'var(--green)' : 'var(--red)'}">${seedAdj > 0 ? '+' : ''}$${Math.abs(seedAdj).toLocaleString()}</span>`
+      : '<span style="color:var(--text-faint)">-</span>';
+    html += `<td class="editable" data-field="seedAdjust" data-date="${r.date}">${seedAdjDisplay}</td>`;
+    
     html += `</tr>`;
   }
   
@@ -5523,9 +5555,13 @@ function renderSheetView() {
         } else if (field === 'sellFill') {
           if (row.sell) row.sell = { ...row.sell, exitPrice: numVal };
         } else if (field === 'sellDate') {
-          // 매도일은 다른 행으로 이동하는 복잡한 작업 → 다음 빌드
           cancelEdit();
           return;
+        } else if (field === 'seedAdjust') {
+          // +500 또는 -200 등 증감액 → 그날 IA 변경
+          row.seedAdjust = numVal;
+          const prevIa = rowIdx > 0 ? rows[rowIdx - 1].ia : row.ia;
+          row.ia = Math.round(prevIa + numVal);
         }
         
         rows[rowIdx] = row;
@@ -5549,9 +5585,151 @@ function renderSheetView() {
       input.addEventListener('blur', confirmEdit);
     });
   });
+
+  // IA 갱신 체크박스 이벤트
+  container.querySelectorAll('.ia-renew-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const date = cb.dataset.date;
+      const rows = getDailyRows();
+      const rowIdx = rows.findIndex(r => r.date === date);
+      if (rowIdx < 0) return;
+
+      const row = { ...rows[rowIdx] };
+
+      if (cb.checked) {
+        // 체크 → 새 IA 입력 요청
+        const prevIa = rowIdx > 0 ? rows[rowIdx - 1].ia : row.ia;
+        const input = prompt(
+          `📅 ${formatSheetDate(date)} IA 갱신\n\n` +
+          `현재 IA: $${Math.round(prevIa).toLocaleString()}\n` +
+          `새 IA 값을 입력하세요:`,
+          Math.round(prevIa).toString()
+        );
+        if (input === null) { cb.checked = false; return; }
+        const newIa = parseFloat(input.replace(/[,$]/g, ''));
+        if (isNaN(newIa) || newIa <= 0) { cb.checked = false; return; }
+
+        row.iaRenewed = true;
+        row.ia = Math.round(newIa);
+      } else {
+        // 체크 해제 → 이전 행 IA로 복원
+        row.iaRenewed = false;
+        row.seedAdjust = 0;
+        row.ia = rowIdx > 0 ? rows[rowIdx - 1].ia : row.ia;
+      }
+
+      rows[rowIdx] = row;
+      recalcFromRow(rows, rowIdx);
+      setDailyRows(rows);
+      renderSheetView();
+      renderSheetSummary();
+
+      console.log(`[IA갱신] ${date}: IA=$${row.ia.toLocaleString()} (${row.iaRenewed ? '갱신됨' : '해제됨'})`);
+    });
+  });
 }
 
 // 시트뷰 상단 요약
+// ====================================================
+// 연쇄 재계산: fromIdx 행부터 이후 모든 행 재계산
+// IA 갱신/시드증감/종가 수정 등 어떤 변경에도 적용
+// ====================================================
+function recalcFromRow(rows, fromIdx) {
+  if (fromIdx >= rows.length) return;
+
+  // fromIdx 이전 행의 누적값 가져오기
+  let ia              = fromIdx > 0 ? rows[fromIdx - 1].ia              : rows[0].ia;
+  let cash            = fromIdx > 0 ? rows[fromIdx - 1].cash            : rows[0].cash;
+  let cumulativeReal  = fromIdx > 0 ? rows[fromIdx - 1].cumulativeRealized : 0;
+  let peakPrice       = fromIdx > 0 ? rows[fromIdx - 1].peakPrice       : rows[0].peakPrice;
+  let boosterOn       = fromIdx > 0 ? rows[fromIdx - 1].boosterOn       : rows[0].boosterOn;
+  let openPos         = fromIdx > 0 ? (rows[fromIdx - 1].openPositions || []).map(p => ({...p})) : [];
+
+  const settings = getSettingsObj();
+
+  for (let i = fromIdx; i < rows.length; i++) {
+    const r     = rows[i];
+    const close = r.close;
+
+    // IA 갱신 처리 (체크된 날이면 새 IA 적용)
+    if (r.iaRenewed && r.ia) {
+      ia = r.ia;
+    } else if (r.seedAdjust && r.seedAdjust !== 0) {
+      // 시드 증감
+      ia = Math.round(ia + r.seedAdjust);
+      r.ia = ia;
+    } else {
+      r.ia = ia;
+    }
+
+    // 전고점
+    if (close && close > peakPrice) peakPrice = close;
+
+    // 부스트
+    if (close && peakPrice > 0) {
+      const pdd = (peakPrice - close) / peakPrice;
+      if (!boosterOn && pdd >= settings.ddEntry) boosterOn = true;
+      else if (boosterOn && pdd < settings.ddExit) boosterOn = false;
+    }
+
+    // 매도 실현손익 재집계
+    if (r.sell) {
+      const pnl = Math.round(((r.sell.exitPrice || 0) - (r.sell.buyPrice || 0)) * (r.sell.qty || 0));
+      r.sell.realizedPnl = pnl;
+      r.realizedPnl = pnl;
+      cumulativeReal += pnl;
+      cash += Math.round((r.sell.exitPrice || 0) * (r.sell.qty || 0));
+      if (r.sell.buyDate) openPos = openPos.filter(p => p.buyDate !== r.sell.buyDate);
+    } else {
+      r.realizedPnl = 0;
+    }
+
+    // 매수 현금 처리
+    if (r.buy) {
+      cash -= Math.round((r.buy.fillPrice || 0) * (r.buy.qty || 0));
+      const alreadyIn = openPos.some(p => p.buyDate === r.date);
+      if (!alreadyIn) {
+        openPos.push({
+          buyDate: r.date, buyPrice: r.buy.fillPrice, qty: r.buy.qty,
+          mode: r.mode, boosted: r.buy.boosted, tier: r.buy.tier,
+          sellTarget: r.buy.sellTarget, expireDate: r.buy.expireDate,
+        });
+      }
+    }
+
+    const holding  = openPos.reduce((s, p) => s + p.qty, 0);
+    const evalAmt  = close ? Math.round(close * holding) : r.evalAmt;
+    const unrealPnl = close ? openPos.reduce((s, p) => s + Math.round((close - p.buyPrice) * p.qty), 0) : 0;
+
+    // pendingBuy 재계산
+    const split  = (r.mode || 'SF') === 'SF' ? settings.sfSplit : settings.agSplit;
+    const buyPct = (r.mode || 'SF') === 'SF' ? settings.sfBuy   : settings.agBuy;
+    const curTier = openPos.length;
+    let pendingBuy = null;
+    if (ia > 0 && close && curTier < split) {
+      const seedFactor = boosterOn ? settings.boostPct : settings.normalPct;
+      const seed = Math.round((ia / split) * seedFactor);
+      const orderPrice = Math.round(close * (1 - buyPct) * 100) / 100;
+      const qty = Math.floor(seed / orderPrice);
+      if (qty > 0) {
+        pendingBuy = { date: r.date, mode: r.mode, orderPrice, qty, seed,
+                       boosted: boosterOn, tier: curTier + 1 };
+      }
+    }
+
+    rows[i] = {
+      ...r,
+      ia, cash: Math.round(cash), evalAmt,
+      totalAsset: Math.round(cash + evalAmt),
+      cumulativeRealized: Math.round(cumulativeReal),
+      holding, boosterOn, peakPrice,
+      unrealizedPnl: unrealPnl,
+      openPositions: openPos.map(p => ({...p})),
+      pendingBuy,
+    };
+  }
+}
+
 function renderSheetSummary() {
   const formState = ACC.get('formState', {});
   const ia = parseFloat(formState.ia) || 0;
@@ -6157,7 +6335,7 @@ function addYears(dateStr, years) {
       let closePrices = {};
       try {
         const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
-          'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=10d'
+          'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo'
         );
         const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
         if (res.ok) {
@@ -6166,7 +6344,7 @@ function addYears(dateStr, years) {
           const closes = result.indicators.quote[0].close;
           const tss = result.timestamp;
           for (let i = 0; i < tss.length; i++) {
-            if (closes[i] != null) closePrices[fmtDate(new Date(tss[i] * 1000))] = closes[i];
+            if (closes[i] != null) { const _d=new Date(tss[i]*1000); closePrices[`${_d.getUTCFullYear()}-${String(_d.getUTCMonth()+1).padStart(2,'0')}-${String(_d.getUTCDate()).padStart(2,'0')}`]=closes[i]; }
           }
         }
       } catch (e) {
