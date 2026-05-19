@@ -2462,7 +2462,7 @@ function recordBuyFill(o) {
   cashInput.value = Math.max(0, parseFloat(cashInput.value) - closeNum * actualQty).toFixed(0);
   saveFormState();
   
-  if (o.boosterOn === 'candidate' || o.boosterOn === true) ACC.set('boosterOn', true);
+  if (o.boosterOn === true) ACC.set('boosterOn', true);
   
   alert(
     `✓ 체결 + 포지션 등록\n\n` +
@@ -2593,11 +2593,12 @@ function calculateOrder() {
   if (prevClose > peak) peak = prevClose;
   const pdd = peak > 0 ? (peak - prevClose) / peak : 0;
   
+  // 단순 낙폭 기준 (백테스트 결과 반등 확인과 동일 성과)
   let boosterOn = prevBoost;
   if (!boosterOn) {
-    if (pdd >= ddEntry) boosterOn = 'candidate';
+    if (pdd >= ddEntry) boosterOn = true;   // 낙폭 기준 즉시 ON
   } else {
-    if (pdd < ddExit) boosterOn = false;
+    if (pdd < ddExit) boosterOn = false;    // 회복 시 OFF
   }
   
   const currentSplit = mode === 'AG' ? agSplit : sfSplit;
@@ -2605,13 +2606,9 @@ function calculateOrder() {
   
   document.getElementById('statDD').textContent = '-' + (pdd * 100).toFixed(1) + '%';
   document.getElementById('statDDSub').textContent = '피크 $' + peak.toFixed(2);
-  document.getElementById('statBoost').textContent = 
-    boosterOn === true ? 'ON' : (boosterOn === 'candidate' ? '후보' : 'OFF');
-  document.getElementById('statBoost').className = 'status-value ' + 
-    (boosterOn === true ? 'boost-on' : 'boost-off');
-  document.getElementById('statBoostSub').textContent = 
-    boosterOn === true ? `×${boostPct.toFixed(2)}` : 
-    (boosterOn === 'candidate' ? '진입조건만족' : `×${normalPct.toFixed(2)}`);
+  document.getElementById('statBoost').textContent = boosterOn ? 'ON' : 'OFF';
+  document.getElementById('statBoost').className = 'status-value ' + (boosterOn ? 'boost-on' : 'boost-off');
+  document.getElementById('statBoostSub').textContent = boosterOn ? `×${boostPct.toFixed(2)}` : `×${normalPct.toFixed(2)}`;
   
   if (tierForSeed > currentSplit) {
     renderEmpty([`최대 분할 도달 (${currentSplit}개 보유 중) → 오늘 매수 안함`]);
@@ -2651,9 +2648,7 @@ function renderOrder(o) {
   const modeBadge = o.mode === 'AG' 
     ? '<span style="color:var(--yellow);">AG 공세</span>' 
     : '<span style="color:var(--blue);">SF 안전</span>';
-  const boostTag = o.boosterOn === true 
-    ? '<span class="tag">부스트</span>' 
-    : (o.boosterOn === 'candidate' ? '<span class="tag" style="background:var(--yellow);">후보</span>' : '');
+  const boostTag = o.boosterOn ? '<span class="tag">부스트</span>' : '';
   
   const orderCmd = `SOXL LOC 매수 ${o.estQty}주 @ $${o.bidPrice}`;
   const sfBuyPct = parseFloat(document.getElementById('set_sfBuy').value);
@@ -2663,9 +2658,6 @@ function renderOrder(o) {
   let warningHtml = '';
   if (o.shortage > 0) {
     warningHtml += `<div class="warning">⚠️ 현금 부족: 원래 $${o.wantedSeed.toLocaleString()} → 실제 $${o.actualSeed.toLocaleString()}</div>`;
-  }
-  if (o.boosterOn === 'candidate') {
-    warningHtml += `<div class="info">💡 부스트 진입조건 만족. 반등 확인 후 ON 전환 고려</div>`;
   }
   
   document.getElementById('orderResult').innerHTML = `
@@ -2973,7 +2965,10 @@ function renderPositions() {
     if (p.boosted) cardClass += ' boosted';
     
     const expireClass = daysToExpire <= 0 ? 'expire' : (daysToExpire <= 2 ? 'expire-near' : '');
-    const expireText = daysToExpire <= 0 ? '오늘 만료' : (daysToExpire === 1 ? '내일 만료' : daysToExpire + '일 남음');
+    const expireDateFmt = formatSheetDate(p.expireDate);
+    const expireText = daysToExpire <= 0 ? `오늘 만료 (${expireDateFmt})` 
+      : daysToExpire === 1 ? `내일 만료 (${expireDateFmt})`
+      : `${expireDateFmt} (${daysToExpire}일)`;
     
     const distToTarget = prevClose ? ((p.sellTarget - prevClose) / prevClose * 100) : 0;
     
@@ -3108,7 +3103,9 @@ function renderSells() {
     activeList.innerHTML = sorted.map(p => {
       const daysToExpire = daysBetween(today, p.expireDate);
       const expireClass = daysToExpire <= 0 ? 'expire' : (daysToExpire <= 2 ? 'expire-near' : '');
-      const expireText = daysToExpire <= 0 ? '오늘 MOC' : (daysToExpire + '일 남음');
+      const expireDateFmt = formatSheetDate(p.expireDate);
+      const expireText = daysToExpire <= 0 ? `오늘 MOC (${expireDateFmt})`
+        : `${expireDateFmt} (${daysToExpire}일)`;
       return `
         <div class="position-card">
           <div class="position-row1">
@@ -4134,6 +4131,7 @@ async function autoImportFromSheet() {
     const openPositions = [];
     const closedTrades = [];     // 청산된 과거 거래
     const recentPnls = [];       // AG열 당일실현 (복리 계산용)
+    const sheetClosePrices = {}; // 시트 O열 종가 (날짜별)
     
     for (let i = 3; i < rows.length; i++) {  // 헤더 이후
       const row = rows[i];
@@ -4150,6 +4148,15 @@ async function autoImportFromSheet() {
       const realizedPnl = cleanNumber(row[col('AE')]); // AE: 실현손익 (행별)
       const boostStr =   (row[col('AZ')] || '').toString().trim().toUpperCase();
       const dailyPnl =   cleanNumber(row[col('AG')]);  // AG: 당일실현
+      const closePrice = cleanNumber(row[col('O')]);   // O: 종가
+      
+      // O열 종가 수집 (날짜 있고 종가 있는 행)
+      if (dateStr && closePrice != null && closePrice > 0) {
+        const normDate = normalizeSheetDate(String(dateStr).trim());
+        if (/^\d{4}-\d{2}-\d{2}$/.test(normDate)) {
+          sheetClosePrices[normDate] = closePrice;
+        }
+      }
       
       const hasSellDate = sellDate && String(sellDate).trim() !== '';
       
@@ -4217,6 +4224,7 @@ async function autoImportFromSheet() {
       openPositions,
       closedTrades,        // 청산된 과거 거래 추가
       recent10,
+      sheetClosePrices,    // O열 종가 (날짜별) → dailyRows 갭 메우기용
       rowCount: rows.length,
       // 디버그용
       _summary: summaryData,
@@ -4366,6 +4374,52 @@ function applyImport(parsed) {
   document.getElementById('importHint').textContent = '✓ 이식 완료! 데이터가 저장되었습니다.';
   document.getElementById('importHint').style.color = 'var(--green)';
   
+  // 시트에서 추출한 종가 데이터로 dailyRows 갭 메우기
+  const sheetPrices = parsed.sheetClosePrices || {};
+  const sheetPriceCount = Object.keys(sheetPrices).length;
+  if (sheetPriceCount > 0) {
+    // dailyRows 마이그레이션 강제 재실행
+    ACC.remove('dailyMigrated');
+    ACC.remove('dailyMigratedVer');
+    // 잠시 후 fillMissingDays 실행 (마이그레이션 완료 후)
+    setTimeout(async () => {
+      try {
+        // 마이그레이션 먼저 (시트뷰 탭 없이 강제 실행)
+        migrateToDaily();
+        // 시트 종가로 갭 메우기
+        const result = await fillMissingDays(sheetPrices);
+        if (result?.added > 0) {
+          console.log(`[import] 시트 종가 ${sheetPriceCount}개로 ${result.added}개 행 추가`);
+        }
+        // 추가로 야후에서 최근 데이터도 시도
+        try {
+          const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
+            'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo'
+          );
+          const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+          if (res.ok) {
+            const data = await res.json();
+            const r = data.chart.result[0];
+            const closes = r.indicators.quote[0].close;
+            const tss = r.timestamp;
+            const yahooPrices = {};
+            for (let i = 0; i < tss.length; i++) {
+              if (closes[i] != null) {
+                const d = new Date(tss[i]*1000);
+                const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+                yahooPrices[dateStr] = closes[i];
+              }
+            }
+            const r2 = await fillMissingDays(yahooPrices);
+            if (r2?.added > 0) console.log(`[import] 야후 ${r2.added}개 행 추가`);
+          }
+        } catch (e) { /* 야후 실패는 무시 */ }
+      } catch (e) {
+        console.warn('[import] dailyRows 갱신 실패:', e.message);
+      }
+    }, 500);
+  }
+  
   alert(
     `✓ 이식 완료\n\n` +
     `• 투자금: ${parsed.ia !== null ? '$' + Math.round(parsed.ia) : '미입력'}\n` +
@@ -4375,7 +4429,7 @@ function applyImport(parsed) {
     `• 부스트: ${parsed.boost ? 'ON' : 'OFF'}\n` +
     `• 보유 포지션: ${parsed.openPositions.length}개\n` +
     `• 과거 거래: ${parsed.closedTrades ? parsed.closedTrades.length : 0}건\n` +
-    `• 최근 10일 실현: ${parsed.recent10.length}개\n\n` +
+    `• 시트 종가: ${sheetPriceCount}개 날짜 → 시트뷰 자동 갱신\n\n` +
     `각 탭에서 확인하세요`
   );
   
@@ -4532,17 +4586,8 @@ async function bulkProcessAllAccounts() {
   const btn = document.getElementById('bulkProcessBtn');
   if (!btn) return;
 
-  if (!confirm(
-    `🚀 모든 계좌 일괄 처리\n\n` +
-    `각 계좌마다 자동 처리:\n` +
-    `• 어제 LOC 매수 → 종가 체결 판정\n` +
-    `• 만료된 포지션 → MOC 종가 청산\n` +
-    `• 목표가 도달 → 청산\n` +
-    `• 오늘 새 LOC 매수 주문 계산\n\n` +
-    `장 마감 후 실행하세요. 계속할까요?`
-  )) return;
-
   btn.disabled = true;
+  btn.style.opacity = '0.6';
   btn.textContent = '⏳ 종가 받는 중...';
 
   // ── 1. 종가 한 번만 받기 ────────────────────────────────────
@@ -4574,7 +4619,7 @@ async function bulkProcessAllAccounts() {
       );
       if (!manual) {
         btn.disabled = false;
-        btn.textContent = `🚀 모든 계좌 일괄 처리 (${ACC.list().length}개 계좌)`;
+        btn.textContent = '🚀 오늘 자동 처리'; btn.style.opacity = '1';
         return;
       }
       closePrices[fmtDate(new Date())] = parseFloat(manual);
@@ -4584,7 +4629,7 @@ async function bulkProcessAllAccounts() {
   if (!Object.keys(closePrices).length) {
     alert('종가를 받지 못했습니다.');
     btn.disabled = false;
-    btn.textContent = `🚀 모든 계좌 일괄 처리 (${ACC.list().length}개 계좌)`;
+    btn.textContent = '🚀 오늘 자동 처리'; btn.style.opacity = '1';
     return;
   }
 
@@ -4776,7 +4821,10 @@ function renderDashboard(targetId = 'dashboardBody') {
       border-radius: 8px; cursor: pointer;
       font-family: inherit; font-size: 13px; font-weight: 600;
     ">
-      🚀 모든 계좌 일괄 처리 (${accounts.length}개 계좌)
+      🚀 오늘 자동 처리 (${accounts.length}개 계좌)
+      <div style="font-size:10px; color:var(--text-dim); font-weight:400; margin-top:3px;">
+        야후 종가 받기 → 매수체결 판정 → 만료/목표 매도 → 신규주문 계산
+      </div>
     </button>
   `;
   
