@@ -663,16 +663,17 @@
   };
   
   // Initialize Firebase (전역으로 노출)
-  let firebaseApp = null;
-  let firebaseAuth = null;
-  let firebaseDb = null;
-  let firebaseUser = null;  // 현재 로그인한 사용자
+  // window.에 할당해야 다른 script 블록에서 접근 가능
+  window.firebaseApp  = null;
+  window.firebaseAuth = null;
+  window.firebaseDb   = null;
+  window.firebaseUser = null;  // 현재 로그인한 사용자
   let firebaseEnabled = false;  // 초기화 성공 여부
   
   try {
-    firebaseApp = firebase.initializeApp(firebaseConfig);
-    firebaseAuth = firebase.auth();
-    firebaseDb = firebase.firestore();
+    window.firebaseApp  = firebase.initializeApp(firebaseConfig);
+    window.firebaseAuth = firebase.auth();
+    window.firebaseDb   = firebase.firestore();
     firebaseEnabled = true;
     console.log('[Firebase] 초기화 성공');
   } catch (e) {
@@ -1831,7 +1832,7 @@ async function loginWithGoogle() {
   try {
     const provider = new firebase.auth.GoogleAuthProvider();
     const result = await firebaseAuth.signInWithPopup(provider);
-    firebaseUser = result.user;
+    window.firebaseUser = result.user;
     SYNC_STATE.enabled = true;
     
     console.log('[auth] 로그인 성공:', firebaseUser.email);
@@ -1911,7 +1912,7 @@ async function logoutFromFirebase() {
       SYNC_STATE.unsubscribe = null;
     }
     await firebaseAuth.signOut();
-    firebaseUser = null;
+    window.firebaseUser = null;
     SYNC_STATE.enabled = false;
     setSyncStatus('logged-out');
     alert('✓ 로그아웃 완료');
@@ -1950,18 +1951,12 @@ function initFirebaseAuth() {
   
   firebaseAuth.onAuthStateChanged(async (user) => {
     if (user) {
-      // 자동 로그인 (이미 로그인된 상태)
-      firebaseUser = user;
+      window.firebaseUser = user;
       SYNC_STATE.enabled = true;
       console.log('[auth] 자동 로그인:', user.email);
-      
-      // 수동 다운로드 모드: 자동 다운로드 안 함
-      // 사용자가 명시적으로 "🔄 클라우드에서 다운로드" 버튼 클릭 시에만 가져옴
-      // (팝업으로 매번 묻지 않음)
-      
       setSyncStatus('synced');
     } else {
-      firebaseUser = null;
+      window.firebaseUser = null;
       SYNC_STATE.enabled = false;
       setSyncStatus('logged-out');
     }
