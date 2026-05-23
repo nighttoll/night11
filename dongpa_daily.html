@@ -4652,9 +4652,6 @@ async function bulkProcessAllAccounts() {
   }
   STORE.set('currentAccountId', originalId);
 
-  // 대시보드 바로 재렌더 (reload 대신)
-  renderDashboardTab();
-  
   // 결과 알림
   const dates      = Object.keys(closePrices).sort();
   const latestDate = dates[dates.length - 1];
@@ -4674,7 +4671,7 @@ async function bulkProcessAllAccounts() {
     }
     if (result.todayOrder) {
       const o = result.todayOrder;
-      items.push(`📝 ${o.mode} $${o.orderPrice?.toFixed(2)}×${o.qty}${o.boosted ? '🚀' : ''}`);
+      items.push(`📝 ${o.mode} $${(o.orderPrice||o.bidPrice||0).toFixed(2)}×${o.qty}${o.boosted ? '🚀' : ''}`);
     }
     if (!items.length) items.push('변동 없음');
     msg += `• ${acc.name}: ${items.join(' / ')}\n`;
@@ -4682,7 +4679,14 @@ async function bulkProcessAllAccounts() {
   msg += `\n━━━━━━━━━\n대시보드에서 오늘 주문 확인하세요.`;
 
   alert(msg);
-  renderDashboardTab();
+  
+  // alert 닫은 후 대시보드 렌더 (한 번만)
+  try {
+    renderDashboardTab();
+  } catch(e) {
+    console.warn('[bulk] 대시보드 렌더 실패:', e.message);
+    location.reload();  // 실패 시 안전하게 새로고침
+  }
 }
 function getDailyRows() {
   return ACC.get('dailyRows', []);
@@ -5717,6 +5721,252 @@ function getMissingTradingDays(fromDate, toDate) {
     d.setDate(d.getDate() + 1);
   }
   return result;
+}
+
+function renderDashboard(targetId = 'dashboardTabBody') {
+  try {
+    const el = document.getElementById(targetId || 'dashboardTabBody');
+    if (!el) return;
+    
+    const accounts = ACC.list();
+    const todayStr = fmtDate(new Date());
+
+    // ── 현재 활성 계좌 데이터 수집 ────────────────────────────
+    const rows        = getDailyRows();
+    const formState   = ACC.get('formState', {});
+    const positions   = ACC.get('positions', []).filter(p => !p.status || p.status === 'open');
+    const history     = ACC.get('history', []);
+    const prevClose   = parseFloat(formState.prevClose) || 0;
+
+    const latestRow = rows.length ? rows[rows.length - 1] : null;
+
+    const ia       = latestRow?.ia       ?? parseFloat(formState.ia)   ?? 0;
+    const cash     = latestRow?.cash     ?? parseFloat(formState.cash) ?? 0;
+    const evalAmt  = latestRow?.evalAmt  ?? positions.reduce((s,p) => s + (prevClose||0)*p.qty, 0);
+    const totalAsset = latestRow?.totalAsset ?? (cash + evalAmt);
+    const cumReal  = latestRow?.cumulativeRealized
+      ?? history.filter(h => h.type==='SELL_TARGET'||h.type==='SELL_EXPIRE').reduce((s,h)=>s+(h.realizedPnl||0),0);
+    const holding  = latestRow?.holding  ?? positions.reduce((s,p) => s + p.qty, 0);
+    const unrealPnl = latestRow?.unrealizedPnl
+      ?? positions.reduce((s,p)=>s+Math.round((prevClose-p.buyPrice)*p.qty),0);
+    const boosterOn = ACC.get('boosterOn', false);
+
+    const returnRate = ia > 0 ? (cumReal / ia * 100) : 0;
+    const evalRate   = ia > 0 ? (unrealPnl / ia * 100) : 0;
+    const avgBuy = holding > 0
+      ? positions.reduce((s,p) => s + p.buyPrice * p.qty, 0) / holding : 0;
+
+    let cagr = 0, mddVal = 0, currentMdd = 0;
+    if (rows.length >= 2) {
+      const firstRow = rows[0];
+      const initVal = firstRow.ia || ia || 10000;
+      const years = (parseDate(latestRow.date) - parseDate(firstRow.date)) / (1000*60*60*24*365.25);
+      if (years > 0 && totalAsset > 0) cagr = (Math.pow(totalAsset / initVal, 1/years) - 1) * 100;
+      let peak = 0;
+      for (const r of rows) {
+        const v = r.totalAsset || 0;
+        if (v > peak) peak = v;
+        if (peak > 0) { const dd = (peak - v) / peak * 100; if (dd > mddVal) mddVal = dd; }
+      }
+      if (peak > 0) currentMdd = (peak - totalAsset) / peak * 100;
+    }
+
+    // 차트 데이터
+    const chartData = [];
+    if (rows.length > 1) {
+      let peak = 0;
+      for (const r of rows) {
+        const v = r.totalAsset || 0;
+        if (v > peak) peak = v;
+        chartData.push({ date: r.date, asset: v, mdd: peak > 0 ? -((peak-v)/peak*100) : 0 });
+      }
+    }
+
+    function buildChart(data) {
+      if (data.length < 2) return '<div style="text-align:center;color:var(--text-faint);padding:40px 0;font-size:12px;">데이터 부족 (시트 이식 후 이용 가능)</div>';
+      const W=600,H=200,PAD={t:10,r:50,b:30,l:55};
+      const iW=W-PAD.l-PAD.r, iH=H-PAD.t-PAD.b;
+      const assets=data.map(d=>d.asset), mdds=data.map(d=>d.mdd);
+      const minA=Math.min(...assets),maxA=Math.max(...assets);
+      const minM=Math.min(...mdds),maxM=0;
+      const aRange=maxA-minA||1, mRange=maxM-minM||1;
+      const ax=i=>PAD.l+(i/(data.length-1))*iW;
+      const ay=v=>PAD.t+iH-((v-minA)/aRange)*iH;
+      const my=v=>PAD.t+iH-((v-minM)/mRange)*iH;
+      const aPath=data.map((d,i)=>`${i===0?'M':'L'}${ax(i).toFixed(1)},${ay(d.asset).toFixed(1)}`).join(' ');
+      const mPath=data.map((d,i)=>`${i===0?'M':'L'}${ax(i).toFixed(1)},${my(d.mdd).toFixed(1)}`).join(' ');
+      const aFill=aPath+` L${ax(data.length-1).toFixed(1)},${(PAD.t+iH).toFixed(1)} L${ax(0).toFixed(1)},${(PAD.t+iH).toFixed(1)} Z`;
+      let yLabels='',mLabels='',xLabels='';
+      for(let i=0;i<=4;i++){
+        const v=minA+(aRange*i/4), y=ay(v);
+        yLabels+=`<text x="${PAD.l-6}" y="${y.toFixed(1)}" text-anchor="end" font-size="9" fill="var(--text-faint)">$${v>=10000?(v/1000).toFixed(0)+'k':v.toFixed(0)}</text>`;
+        yLabels+=`<line x1="${PAD.l}" y1="${y.toFixed(1)}" x2="${W-PAD.r}" y2="${y.toFixed(1)}" stroke="var(--border-lite)" stroke-width="0.5"/>`;
+        const mv=minM+(mRange*i/4), my2=my(mv);
+        mLabels+=`<text x="${W-PAD.r+6}" y="${my2.toFixed(1)}" font-size="9" fill="var(--red)" opacity="0.7">${mv.toFixed(0)}%</text>`;
+      }
+      const step=Math.max(1,Math.floor(data.length/6));
+      for(let i=0;i<data.length;i+=step){
+        const d=data[i].date, label=d.slice(2,4)+'.'+d.slice(5,7);
+        xLabels+=`<text x="${ax(i).toFixed(1)}" y="${H-8}" text-anchor="middle" font-size="9" fill="var(--text-faint)">${label}</text>`;
+      }
+      return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:200px;overflow:visible;">
+        <defs><linearGradient id="aGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.3"/>
+          <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/>
+        </linearGradient><clipPath id="chartClip"><rect x="${PAD.l}" y="${PAD.t}" width="${iW}" height="${iH}"/></clipPath></defs>
+        <g clip-path="url(#chartClip)">
+          <path d="${aFill}" fill="url(#aGrad)"/>
+          <path d="${aPath}" fill="none" stroke="var(--accent)" stroke-width="1.8"/>
+          <path d="${mPath}" fill="none" stroke="var(--red)" stroke-width="1.2" stroke-dasharray="3,2" opacity="0.8"/>
+        </g>
+        ${yLabels}${mLabels}${xLabels}
+        <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t+iH}" stroke="var(--border-lite)" stroke-width="1"/>
+        <line x1="${PAD.l}" y1="${PAD.t+iH}" x2="${W-PAD.r}" y2="${PAD.t+iH}" stroke="var(--border-lite)" stroke-width="1"/>
+      </svg>`;
+    }
+
+    const card=(label,value,sub='',color='')=>
+      `<div style="background:var(--surface);border-radius:8px;padding:10px 12px;">
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">${label}</div>
+        <div style="font-size:15px;font-weight:700;font-family:'JetBrains Mono',monospace;color:${color||'var(--text)'};">${value}</div>
+        ${sub?`<div style="font-size:10px;color:var(--text-faint);margin-top:2px;">${sub}</div>`:''}
+      </div>`;
+
+    const pct=(v,d=2)=>({val:`${v>=0?'+':''}${v.toFixed(d)}%`,color:v>=0?'var(--green)':'var(--red)'});
+    const usd=v=>({val:`${v>=0?'+':'-'}$${Math.abs(Math.round(v)).toLocaleString()}`,color:v>=0?'var(--green)':'var(--red)'});
+    const p1=pct(returnRate), p2=pct(evalRate), p3=pct(cagr), u1=usd(cumReal), u2=usd(unrealPnl);
+
+    // 오늘 주문 수집
+    const todayOrders = [];
+    for (const acc of accounts) {
+      const pb = ACC.getFor(acc.id, 'pendingBuys', []);
+      pb.forEach(o => todayOrders.push({ ...o, accName: acc.name, accColor: acc.color, type: 'BUY' }));
+      const pos2 = ACC.getFor(acc.id, 'positions', []).filter(p => !p.status || p.status === 'open');
+      pos2.forEach(p => {
+        if (p.expireDate && p.expireDate <= todayStr)
+          todayOrders.push({ ...p, accName: acc.name, accColor: acc.color, type: 'SELL_EXPIRE' });
+        else if (prevClose > 0 && p.sellTarget && prevClose >= p.sellTarget)
+          todayOrders.push({ ...p, accName: acc.name, accColor: acc.color, type: 'SELL_TARGET' });
+      });
+    }
+
+    let html = `
+      <button id="bulkProcessBtn" style="width:100%;padding:13px;margin-bottom:14px;
+        background:var(--accent-dark);color:var(--accent);border:1px solid var(--accent);
+        border-radius:8px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;">
+        🚀 오늘 자동 처리 (${accounts.length}개 계좌)
+        <div style="font-size:10px;color:var(--text-dim);font-weight:400;margin-top:2px;">
+          야후 종가 받기 → 매수체결 판정 → 만료/목표 매도 → 신규주문 계산
+        </div>
+      </button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+        ${card('총자산','$'+Math.round(totalAsset).toLocaleString())}
+        ${card('수익률',p1.val,'누적 실현 기준',p1.color)}
+        ${card('CAGR',p3.val,'연환산 수익률',p3.color)}
+        ${card('MDD (전체)','-'+mddVal.toFixed(2)+'%','최대낙폭','var(--red)')}
+        ${card('누적 실현손익',u1.val,'',u1.color)}
+        ${card('평가손익',u2.val,'미실현',u2.color)}
+        ${card('보유주식수',holding+'주',prevClose>0?'현재가 $'+prevClose.toFixed(2):'')}
+        ${card('보유평단',avgBuy>0?'$'+avgBuy.toFixed(2):'-',holding>0?holding+'주':'')}
+        ${card('평가금','$'+Math.round(evalAmt).toLocaleString())}
+        ${card('예수금','$'+Math.round(cash).toLocaleString())}
+        ${card('현재 MDD','-'+currentMdd.toFixed(2)+'%','',currentMdd>10?'var(--red)':'var(--text)')}
+        ${card('IA (갱신금)','$'+Math.round(ia).toLocaleString(),boosterOn?'🚀 부스트 ON':'')}
+      </div>
+      <div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <div style="font-size:12px;font-weight:600;">📈 자산 추이</div>
+          <div style="display:flex;gap:12px;font-size:10px;color:var(--text-dim);">
+            <span style="display:flex;align-items:center;gap:4px;"><span style="display:inline-block;width:16px;height:2px;background:var(--accent);"></span> 총자산</span>
+            <span style="display:flex;align-items:center;gap:4px;"><span style="display:inline-block;width:16px;height:0;border-top:2px dashed var(--red);"></span> MDD</span>
+          </div>
+        </div>
+        ${buildChart(chartData)}
+      </div>`;
+
+    if (todayOrders.length > 0) {
+      html += `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:14px;">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px;">📋 오늘 주문 (${todayOrders.length}건)</div>
+        ${todayOrders.map(o => {
+          const isBuy = o.type==='BUY', isExpire = o.type==='SELL_EXPIRE';
+          const typeLabel = isBuy?'매수 LOC':isExpire?'매도 MOC':'매도 LOC';
+          const typeColor = isBuy?'var(--green)':'var(--red)';
+          const rawPrice = isBuy?(o.orderPrice||o.bidPrice):(o.sellTarget||prevClose);
+          const price = rawPrice?Number(rawPrice).toFixed(2):'-';
+          const qty = o.qty||o.estQty||'-';
+          return `<div style="display:flex;justify-content:space-between;align-items:center;
+            padding:7px 10px;border-radius:6px;background:var(--bg);margin-bottom:4px;font-size:11px;">
+            <span>
+              <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${o.accColor||'var(--accent)'};margin-right:5px;"></span>
+              <span style="color:var(--text-dim);">${o.accName||''}</span>
+              <span style="color:${typeColor};margin-left:6px;font-weight:600;">${typeLabel}</span>
+              ${o.mode?`<span style="color:var(--text-faint);margin-left:4px;">${o.mode}</span>`:''}
+              ${o.boosted?'<span style="margin-left:4px;">🚀</span>':''}
+            </span>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:600;">$${price} × ${qty}</span>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+
+    html += `<div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">계좌별 (${accounts.length}개)</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">`;
+    for (const acc of accounts) {
+      const fs = ACC.getFor(acc.id,'formState',{});
+      const dr = ACC.getFor(acc.id,'dailyRows',[]);
+      const lr = dr[dr.length-1];
+      const acash = lr?.cash ?? parseFloat(fs.cash) ?? 0;
+      const aIA   = lr?.ia   ?? parseFloat(fs.ia)   ?? 0;
+      const aeval = lr?.evalAmt ?? 0;
+      const atotal = lr?.totalAsset ?? (acash+aeval);
+      const areal = lr?.cumulativeRealized ?? 0;
+      const aRet = aIA>0?(areal/aIA*100):0;
+      const isActive = acc.id===ACC.current();
+      const aPos = ACC.getFor(acc.id,'positions',[]).filter(p=>!p.status||p.status==='open');
+      html += `<div class="dashboard-account-card" data-acc-id="${acc.id}" style="
+        padding:10px 14px;border-radius:8px;cursor:pointer;
+        background:${isActive?'var(--accent-dark)':'var(--surface)'};
+        border:1px solid ${isActive?'var(--accent)':'transparent'};
+        display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="width:8px;height:8px;border-radius:50%;background:${acc.color};flex-shrink:0;"></span>
+          <div>
+            <div style="font-size:12px;font-weight:600;">${acc.name}${isActive?'<span style="font-size:9px;color:var(--accent);margin-left:5px;">활성</span>':''}</div>
+            <div style="font-size:10px;color:var(--text-dim);margin-top:1px;">보유 ${aPos.length}개 · IA $${Math.round(aIA).toLocaleString()}</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:13px;font-weight:700;font-family:'JetBrains Mono',monospace;">$${Math.round(atotal).toLocaleString()}</div>
+          <div style="font-size:10px;color:${aRet>=0?'var(--green)':'var(--red)'};">${aRet>=0?'+':''}${aRet.toFixed(1)}%</div>
+        </div>
+      </div>`;
+    }
+    html += '</div>';
+
+    el.innerHTML = html;
+
+    const bulkBtn = el.querySelector('#bulkProcessBtn');
+    if (bulkBtn) bulkBtn.addEventListener('click', bulkProcessAllAccounts);
+    el.querySelectorAll('.dashboard-account-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const accId = card.dataset.accId;
+        if (accId !== ACC.current()) { switchAccount(accId); location.reload(); }
+        else if (targetId === 'dashboardBody') {
+          document.getElementById('dashboardModal').classList.remove('show');
+        }
+      });
+    });
+
+  } catch(e) {
+    console.error('[dashboard] 렌더 실패:', e);
+    const el = document.getElementById(targetId || 'dashboardTabBody');
+    if (el) el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-dim);">
+      <div>⚠️ 오류: ${e.message}</div>
+      <button onclick="location.reload()" style="margin-top:12px;padding:6px 14px;
+        background:var(--accent-dark);color:var(--accent);border:1px solid var(--accent);
+        border-radius:6px;cursor:pointer;">새로고침</button>
+    </div>`;
+  }
 }
 
 function renderDashboardTab() {
