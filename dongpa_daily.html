@@ -2472,6 +2472,114 @@ function recordBuyFill(o) {
 // ====================================================
 // 매도 청산 처리
 // ====================================================
+// 단일 계좌 청산 판정 (계좌 ID + 종가 주입)
+function processSellsForAccount(accId, close) {
+  const today = fmtDate(new Date());
+  const savedId = ACC.current();
+  if (accId) STORE.set('currentAccountId', accId);
+  
+  const positions = getPositions();
+  const results = [];
+  
+  for (const p of positions) {
+    if (p.status !== 'open') continue;
+    if (p.buyDate === today) continue;
+    if (!p.sellRegistered) continue;
+    
+    let event = null;
+    if (today < p.expireDate && close >= p.sellTarget) {
+      event = { type: 'TARGET', exitPrice: close };
+    } else if (today >= p.expireDate) {
+      event = { type: 'EXPIRE', exitPrice: close };
+    }
+    
+    if (event) {
+      const pnl = (event.exitPrice - p.buyPrice) * p.qty;
+      p.status = 'closed';
+      p.exitDate = today;
+      p.exitPrice = event.exitPrice;
+      p.exitType = event.type;
+      p.realizedPnl = Math.round(pnl * 100) / 100;
+      
+      addHistory({
+        id: 'H' + Date.now() + '_' + p.id,
+        date: today,
+        type: event.type === 'TARGET' ? 'SELL_TARGET' : 'SELL_EXPIRE',
+        mode: p.mode, buyPrice: p.buyPrice, exitPrice: event.exitPrice,
+        qty: p.qty, posId: p.id, sellTarget: p.sellTarget,
+        buyDate: p.buyDate, boosted: p.boosted, realizedPnl: p.realizedPnl,
+      });
+      
+      // 현금 환입
+      const fs = ACC.get('formState', {});
+      const newCash = (parseFloat(fs.cash) || 0) + event.exitPrice * p.qty;
+      ACC.set('formState', { ...fs, cash: Math.round(newCash) });
+      
+      results.push(p);
+    }
+  }
+  
+  setPositions(positions);
+  
+  if (accId) STORE.set('currentAccountId', savedId);
+  return results;
+}
+
+// 단일 계좌 매수체결 판정 (계좌 ID + 종가 주입)
+function processBuysForAccount(accId, close) {
+  const today = fmtDate(new Date());
+  const savedId = ACC.current();
+  if (accId) STORE.set('currentAccountId', accId);
+  
+  const pendingBuys = ACC.get('pendingBuys', []);
+  const filled = [];
+  const remaining = [];
+  
+  for (const pb of pendingBuys) {
+    const orderPrice = pb.orderPrice || pb.bidPrice || 0;
+    if (orderPrice > 0 && close <= orderPrice) {
+      // 체결
+      const mode = pb.mode || 'SF';
+      const holdDays = mode === 'SF'
+        ? (parseInt(document.getElementById('set_sfHold')?.value) || 35)
+        : (parseInt(document.getElementById('set_agHold')?.value) || 7);
+      const sellPct = mode === 'SF'
+        ? (parseFloat(document.getElementById('set_sfSell')?.value) || 1.8) / 100
+        : (parseFloat(document.getElementById('set_agSell')?.value) || 3.0) / 100;
+      const expireDate = fmtDate(addTradingDays(new Date(), holdDays));
+      const sellTarget = Math.ceil(close * (1 + sellPct) * 100) / 100;
+      
+      const pos = {
+        id: 'P' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        buyDate: today, buyPrice: close, qty: pb.qty,
+        mode, boosted: pb.boosted, tier: pb.tier, seed: pb.seed,
+        sellTarget, expireDate, status: 'open', sellRegistered: true,
+      };
+      addPosition(pos);
+      addHistory({
+        id: 'H' + Date.now(), date: today, type: 'BUY',
+        mode, orderPrice, fillPrice: close, qty: pb.qty,
+        boosted: pb.boosted, tier: pb.tier,
+        sellTarget, expireDate,
+      });
+      
+      // 현금 차감
+      const fs = ACC.get('formState', {});
+      const newCash = (parseFloat(fs.cash) || 0) - close * pb.qty;
+      ACC.set('formState', { ...fs, cash: Math.round(newCash) });
+      
+      filled.push(pb);
+    } else {
+      remaining.push(pb);
+    }
+  }
+  
+  ACC.set('pendingBuys', remaining);
+  
+  if (accId) STORE.set('currentAccountId', savedId);
+  return { filled, remaining };
+}
+
 function processSells() {
   const closeStr = document.getElementById('todayClose').value;
   const close = parseFloat(closeStr);
@@ -4633,18 +4741,40 @@ async function bulkProcessAllAccounts() {
   const originalId = ACC.current();
   const allResults = [];
 
+  // 최신 종가 미리 계산
+  const sortedDates = Object.keys(closePrices).sort();
+  const latestDate  = sortedDates[sortedDates.length - 1];
+  const latestClose = latestDate ? closePrices[latestDate] : 0;
+
   btn.textContent = '⏳ 처리 중...';
 
   for (const acc of accounts) {
     try {
-      const result = await fillMissingDays(closePrices, acc.id);
+      // 1. 누락된 과거 날짜 처리 (dailyRows)
+      const fillResult = await fillMissingDays(closePrices, acc.id);
       
-      // fillMissingDays 결과의 pendingBuy → ACC pendingBuys에 저장 (대시보드 표시용)
-      if (result?.todayOrder) {
-        ACC.set('pendingBuys', [result.todayOrder]);
+      // 2. 오늘 매수체결 판정 (pendingBuys → positions/history)
+      const buyResult = processBuysForAccount(acc.id, latestClose);
+      
+      // 3. 오늘 청산 판정 (positions → history)
+      const sellResult = processSellsForAccount(acc.id, latestClose);
+      
+      // 4. fillMissingDays todayOrder → pendingBuys 저장
+      if (fillResult?.todayOrder) {
+        STORE.set('currentAccountId', acc.id);
+        ACC.set('pendingBuys', [fillResult.todayOrder]);
       }
       
-      allResults.push({ acc, result });
+      allResults.push({
+        acc,
+        result: {
+          ...fillResult,
+          buysFilled: buyResult.filled.length,
+          sellsClosed: sellResult.length,
+          todayOrder: fillResult?.todayOrder,
+          todaySell: sellResult[0] || null,
+        }
+      });
     } catch (e) {
       console.warn('[bulk] 계좌 처리 실패:', acc.name, e.message);
       allResults.push({ acc, result: { added: 0, error: e.message } });
@@ -4652,26 +4782,18 @@ async function bulkProcessAllAccounts() {
   }
   STORE.set('currentAccountId', originalId);
 
-  // 결과 알림
-  const dates      = Object.keys(closePrices).sort();
-  const latestDate = dates[dates.length - 1];
-  const latestClose = closePrices[latestDate];
-
   let msg = `✅ 일괄 처리 완료\n\n`;
   msg    += `SOXL 종가: $${latestClose?.toFixed(2)} (${latestDate})\n\n`;
 
   for (const { acc, result } of allResults) {
     if (result.error) { msg += `❌ ${acc.name}: 오류 (${result.error})\n`; continue; }
     const items = [];
-    if (result.added > 0)      items.push(`${result.added}일 처리`);
-    if (result.todaySell) {
-      const s = result.todaySell;
-      const sign = (s.realizedPnl || 0) >= 0 ? '+' : '';
-      items.push(`매도 ${s.qty}주 (${sign}$${(s.realizedPnl||0).toFixed(0)})`);
-    }
+    if (result.added > 0)        items.push(`${result.added}일 소급`);
+    if (result.buysFilled > 0)   items.push(`매수체결 ${result.buysFilled}건`);
+    if (result.sellsClosed > 0)  items.push(`청산 ${result.sellsClosed}건`);
     if (result.todayOrder) {
       const o = result.todayOrder;
-      items.push(`📝 ${o.mode} $${(o.orderPrice||o.bidPrice||0).toFixed(2)}×${o.qty}${o.boosted ? '🚀' : ''}`);
+      items.push(`📝 ${o.mode} $${(o.orderPrice||o.bidPrice||0).toFixed(2)}×${o.qty}${o.boosted?'🚀':''}`);
     }
     if (!items.length) items.push('변동 없음');
     msg += `• ${acc.name}: ${items.join(' / ')}\n`;
