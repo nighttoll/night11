@@ -1624,13 +1624,13 @@ const SYNC_STATE = {
 
 // 사용자 데이터 경로
 function getUserDocRef() {
-  if (!firebaseUser || !firebaseDb) return null;
+  if (!window.firebaseUser || !firebaseDb) return null;
   return firebaseDb.collection('users').doc(firebaseUser.uid);
 }
 
 // 모든 LocalStorage 데이터를 Firestore에 업로드
 async function uploadAllDataToFirebase() {
-  if (!firebaseUser || !firebaseDb) {
+  if (!window.firebaseUser || !firebaseDb) {
     console.warn('[sync] Firebase 미준비');
     return false;
   }
@@ -1670,7 +1670,7 @@ async function uploadAllDataToFirebase() {
 
 // Firestore에서 모든 데이터를 다운로드해서 LocalStorage에 적용
 async function downloadAllDataFromFirebase() {
-  if (!firebaseUser || !firebaseDb) return false;
+  if (!window.firebaseUser || !firebaseDb) return false;
   
   setSyncStatus('syncing');
   
@@ -1716,7 +1716,7 @@ async function downloadAllDataFromFirebase() {
 
 // 실시간 리스너 시작 (다른 기기 변경사항 자동 감지)
 function startRealtimeSync() {
-  if (!firebaseUser || !firebaseDb) return;
+  if (!window.firebaseUser || !firebaseDb) return;
   
   // 이미 리스너 있으면 정리
   if (SYNC_STATE.unsubscribe) SYNC_STATE.unsubscribe();
@@ -1824,14 +1824,14 @@ function setSyncStatus(status, errorMsg = null) {
 
 // 로그인
 async function loginWithGoogle() {
-  if (!firebaseEnabled) {
+  if (!window.firebaseEnabled) {
     alert('Firebase가 초기화되지 않았습니다.\n네트워크 또는 SDK 로드 실패.');
     return;
   }
   
   try {
     const provider = new firebase.auth.GoogleAuthProvider();
-    const result = await firebaseAuth.signInWithPopup(provider);
+    const result = await window.firebaseAuth.signInWithPopup(provider);
     window.firebaseUser = result.user;
     SYNC_STATE.enabled = true;
     
@@ -1911,7 +1911,7 @@ async function logoutFromFirebase() {
       SYNC_STATE.unsubscribe();
       SYNC_STATE.unsubscribe = null;
     }
-    await firebaseAuth.signOut();
+    await window.firebaseAuth.signOut();
     window.firebaseUser = null;
     SYNC_STATE.enabled = false;
     setSyncStatus('logged-out');
@@ -1943,13 +1943,13 @@ function onLoginBtnClick() {
 
 // 앱 시작 시 자동 로그인 복원
 function initFirebaseAuth() {
-  if (!firebaseEnabled) {
+  if (!window.firebaseEnabled) {
     console.log('[Firebase] 비활성화');
     setSyncStatus('logged-out');
     return;
   }
   
-  firebaseAuth.onAuthStateChanged(async (user) => {
+  window.firebaseAuth.onAuthStateChanged(async (user) => {
     if (user) {
       window.firebaseUser = user;
       SYNC_STATE.enabled = true;
@@ -6210,7 +6210,7 @@ document.getElementById('syncCounterBtn').addEventListener('click', async () => 
 document.getElementById('cloudDownloadBtn').addEventListener('click', async () => {
   document.getElementById('accountMenu').style.display = 'none';
   
-  if (!firebaseUser) {
+  if (!window.firebaseUser) {
     alert('☁️ 클라우드 다운로드를 사용하려면 먼저 로그인해주세요.');
     return;
   }
