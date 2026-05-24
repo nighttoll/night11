@@ -709,6 +709,7 @@
         <span id="loginBtnLabel">로그인</span>
       </button>
       <div class="today-chip" id="todayChip">—</div>
+      <div id="headerPrice" style="font-size:10px;color:var(--text-faint);white-space:nowrap;"></div>
     </div>
   </div>
   
@@ -6521,10 +6522,14 @@ function addYears(dateStr, years) {
   // 첫 화면(대시보드 탭)도 렌더
   renderDashboardTab();
   
-  // 누락일 자동 처리 (백그라운드, 화면 렌더 후 실행)
+  // ── 앱 시작 시 자동 처리 ─────────────────────────────────
+  // 야후 종가 받기 → 4계좌 자동처리 → 헤더 가격 표시
   setTimeout(async () => {
+    const priceEl = document.getElementById('headerPrice');
+    if (priceEl) priceEl.textContent = '⏳ 종가 받는 중...';
+
     try {
-      // 종가 먼저 받기
+      // 1. 종가 받기
       let closePrices = {};
       try {
         const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
@@ -6537,28 +6542,81 @@ function addYears(dateStr, years) {
           const closes = result.indicators.quote[0].close;
           const tss = result.timestamp;
           for (let i = 0; i < tss.length; i++) {
-            if (closes[i] != null) { const _d=new Date(tss[i]*1000); closePrices[`${_d.getUTCFullYear()}-${String(_d.getUTCMonth()+1).padStart(2,'0')}-${String(_d.getUTCDate()).padStart(2,'0')}`]=closes[i]; }
+            if (closes[i] != null) {
+              const d = new Date(tss[i] * 1000);
+              const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+              closePrices[dateStr] = closes[i];
+            }
           }
         }
       } catch (e) {
         try {
           const r = await fetchClosePriceFromSheet();
           closePrices[fmtDate(new Date())] = r.price;
-        } catch (_) { /* 무시 */ }
+        } catch (_) {}
       }
 
-      if (!Object.keys(closePrices).length) return;
-
-      // 현재 계좌만 처리 (앱 열 때)
-      const result = await fillMissingDays(closePrices);
-      if (result?.added > 0) {
-        console.log(`[init] 누락일 ${result.added}건 자동 처리 완료`);
-        const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
-        if (activeTab === 'sheetview') renderSheetView();
-        else renderDashboardTab();
+      if (!Object.keys(closePrices).length) {
+        if (priceEl) priceEl.innerHTML = '<span style="color:var(--red)">종가 수신 실패</span>';
+        return;
       }
+
+      // 최신 종가 / 날짜
+      const latestDate  = Object.keys(closePrices).sort().slice(-1)[0];
+      const latestClose = closePrices[latestDate];
+
+      // 헤더에 즉시 표시
+      if (priceEl) {
+        const d = latestDate.slice(2).replace(/-/g, '.');
+        priceEl.innerHTML =
+          `<span style="color:var(--accent);font-weight:600;">$${latestClose.toFixed(2)}</span>` +
+          `<span style="color:var(--text-faint);font-size:9px;margin-left:4px;">${d}</span>`;
+      }
+
+      // 오늘 이미 처리했으면 스킵
+      const lastDone = STORE.get('lastAutoProcessDate', '');
+      if (lastDone === latestDate) {
+        console.log('[init] 이미 처리됨:', latestDate);
+        return;
+      }
+
+      // 2. 4계좌 자동처리
+      const accounts = ACC.list();
+      const originalId = ACC.current();
+      let totalSells = 0, totalBuys = 0;
+
+      for (const acc of accounts) {
+        try {
+          await fillMissingDays(closePrices, acc.id);
+          const br = processBuysForAccount(acc.id, latestClose);
+          const sr = processSellsForAccount(acc.id, latestClose);
+          totalBuys  += br.filled.length;
+          totalSells += sr.length;
+          // 새 pendingBuy 저장
+          const dr = ACC.getFor(acc.id, 'dailyRows', []);
+          const lastRow = dr[dr.length - 1];
+          if (lastRow?.pendingBuy) {
+            STORE.set('currentAccountId', acc.id);
+            ACC.set('pendingBuys', [lastRow.pendingBuy]);
+          }
+        } catch (e) {
+          console.warn('[init] 계좌 처리 실패:', acc.name, e.message);
+        }
+      }
+
+      STORE.set('currentAccountId', originalId);
+      STORE.set('lastAutoProcessDate', latestDate);
+
+      console.log(`[init] 자동처리 완료: 체결${totalBuys} 청산${totalSells}`);
+
+      // 처리 결과 대시보드 갱신
+      const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
+      if (activeTab === 'sheetview') renderSheetView();
+      else renderDashboardTab();
+
     } catch (e) {
-      console.warn('[init] 누락일 처리 실패:', e.message);
+      console.warn('[init] 자동처리 실패:', e.message);
+      if (priceEl) priceEl.innerHTML = '<span style="color:var(--red)">오류</span>';
     }
   }, 1500);
 })();
