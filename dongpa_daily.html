@@ -5847,8 +5847,11 @@ function getMissingTradingDays(fromDate, toDate) {
 }
 
 // 대시보드 필터 상태 (세션 유지)
-let dashAccFilter    = 'all';  // 'all' | accId
-let dashPeriodFilter = '3m';   // '1m'|'3m'|'6m'|'1y'|'all'
+let dashAccFilter    = 'all';   // 'all' | accId
+let dashPeriodFilter = '3m';    // '1m'|'3m'|'6m'|'1y'|'all'|'custom'
+let dashReturnMode   = 'real';  // 'real'(실현손익) | 'asset'(자산변화)
+let dashCustomStart  = '';      // 'YYYY-MM-DD'
+let dashCustomEnd    = '';      // 'YYYY-MM-DD'
 
 function renderDashboard(targetId = 'dashboardTabBody') {
   try {
@@ -5886,6 +5889,11 @@ function renderDashboard(targetId = 'dashboardTabBody') {
 
     function filterByPeriod(rows, period) {
       if (period === 'all') return rows;
+      if (period === 'custom') {
+        const s = dashCustomStart, e = dashCustomEnd || fmtDate(new Date());
+        if (!s) return rows;
+        return rows.filter(r => r.date >= s && r.date <= e);
+      }
       const months = { '1m':1, '3m':3, '6m':6, '1y':12 }[period] || 3;
       const cutoff = new Date();
       cutoff.setMonth(cutoff.getMonth() - months);
@@ -5915,14 +5923,22 @@ function renderDashboard(targetId = 'dashboardTabBody') {
     const avgBuy     = holding > 0 ? positions.reduce((s,p)=>s+p.buyPrice*p.qty,0)/holding : 0;
 
     // ── 수익률 계산 ──────────────────────────────────────────
-    // 누적 수익률: cumReal / 첫 행 ia
-    const initIA       = allRows[0]?.ia || ia || 1;
+    // 누적 수익률 (전체 기간, 실현손익 기준)
+    const initIA        = allRows[0]?.ia || ia || 1;
     const cumReturnRate = initIA > 0 ? (cumReal / initIA * 100) : 0;
 
-    // 기간별 수익률: 해당 기간 실현손익 / 기간 시작 IA
-    const periodReal   = filteredRows.reduce((s,r) => s + (r.realizedPnl || 0), 0);
-    const periodStartIA = firstRow?.ia || ia || 1;
-    const periodReturnRate = periodStartIA > 0 ? (periodReal / periodStartIA * 100) : 0;
+    // 기간별 수익률 (선택 기간)
+    const periodReal      = filteredRows.reduce((s,r) => s + (r.realizedPnl || 0), 0);
+    const periodStartIA   = firstRow?.ia || ia || 1;
+    const periodStartAsset = firstRow?.totalAsset || 0;
+
+    // 자산변화 기준 수익률
+    const assetChangeTotal  = initIA > 0 ? ((totalAsset - (allRows[0]?.totalAsset || initIA)) / (allRows[0]?.totalAsset || initIA) * 100) : 0;
+    const assetChangePeriod = periodStartAsset > 0 ? ((totalAsset - periodStartAsset) / periodStartAsset * 100) : 0;
+
+    // 표시할 수익률 (모드에 따라 선택)
+    const cumRate    = dashReturnMode === 'real' ? cumReturnRate   : assetChangeTotal;
+    const periodRate = dashReturnMode === 'real' ? (periodStartIA > 0 ? periodReal / periodStartIA * 100 : 0) : assetChangePeriod;
 
     // CAGR + MDD
     let cagr = 0, mddVal = 0, currentMdd = 0;
@@ -6000,6 +6016,9 @@ function renderDashboard(targetId = 'dashboardTabBody') {
     const pct=(v,d=2)=>({val:`${v>=0?'+':''}${v.toFixed(d)}%`,color:v>=0?'var(--green)':'var(--red)'});
     const usd=v=>({val:`${v>=0?'+':'-'}$${Math.abs(Math.round(v)).toLocaleString()}`,color:v>=0?'var(--green)':'var(--red)'});
     const p3=pct(cagr), u1=usd(cumReal), u2=usd(unrealPnl);
+    const cumR = pct(cumRate), perR = pct(periodRate);
+    const periodLabels = {'1m':'1개월','3m':'3개월','6m':'6개월','1y':'1년','all':'전체','custom':'직접입력'};
+    const modeLabel = dashReturnMode==='real'?'실현손익 기준':'자산변화 기준';
 
     // ── 오늘 주문 수집 ───────────────────────────────────────
     const todayOrders = [];
@@ -6015,20 +6034,8 @@ function renderDashboard(targetId = 'dashboardTabBody') {
       });
     }
 
-    // ── 필터 버튼 스타일 ─────────────────────────────────────
-    const filterBtn = (label, active) =>
-      `<button style="padding:5px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;
-        background:${active?'var(--accent)':'var(--surface)'};
-        color:${active?'var(--bg)':'var(--text-dim)'};
-        border:1px solid ${active?'var(--accent)':'var(--border-lite)'};">${label}</button>`;
-
-    const periodLabels = {'1m':'1개월','3m':'3개월','6m':'6개월','1y':'1년','all':'전체'};
-    const cumR  = pct(cumReturnRate);
-    const perR  = pct(periodReturnRate);
-
     // ── HTML 조립 ─────────────────────────────────────────────
     let html = `
-      <!-- 자동처리 버튼 -->
       <button id="bulkProcessBtn" style="width:100%;padding:12px;margin-bottom:12px;
         background:var(--accent-dark);color:var(--accent);border:1px solid var(--accent);
         border-radius:8px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;">
@@ -6039,42 +6046,66 @@ function renderDashboard(targetId = 'dashboardTabBody') {
       </button>
 
       <!-- 계좌 선택 -->
-      <div id="dashAccTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
-        <button data-acc="all" style="padding:5px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;
-          background:${dashAccFilter==='all'?'var(--accent)':'var(--surface)'};
-          color:${dashAccFilter==='all'?'var(--bg)':'var(--text-dim)'};
-          border:1px solid ${dashAccFilter==='all'?'var(--accent)':'var(--border-lite)'};">전체합산</button>
-        ${accounts.map(a=>`
-          <button data-acc="${a.id}" style="padding:5px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;
-            background:${dashAccFilter===a.id?'var(--accent)':'var(--surface)'};
-            color:${dashAccFilter===a.id?'var(--bg)':'var(--text-dim)'};
-            border:1px solid ${dashAccFilter===a.id?'var(--accent)':'var(--border-lite)'};">${a.name}</button>`).join('')}
+      <div id="dashAccTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+        ${['all',...accounts.map(a=>a.id)].map(id=>{
+          const label=id==='all'?'전체합산':accounts.find(a=>a.id===id)?.name||id;
+          const ac=dashAccFilter===id;
+          return `<button data-acc="${id}" style="padding:5px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;
+            background:${ac?'var(--accent)':'var(--surface)'};color:${ac?'var(--bg)':'var(--text-dim)'};
+            border:1px solid ${ac?'var(--accent)':'var(--border-lite)'};">${label}</button>`;
+        }).join('')}
       </div>
 
       <!-- 기간 선택 -->
-      <div id="dashPeriodTabs" style="display:flex;gap:6px;margin-bottom:12px;">
-        ${['1m','3m','6m','1y','all'].map(p=>`
-          <button data-period="${p}" style="padding:5px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;flex:1;
-            background:${dashPeriodFilter===p?'var(--accent)':'var(--surface)'};
-            color:${dashPeriodFilter===p?'var(--bg)':'var(--text-dim)'};
-            border:1px solid ${dashPeriodFilter===p?'var(--accent)':'var(--border-lite)'};">${periodLabels[p]}</button>`).join('')}
+      <div id="dashPeriodTabs" style="display:flex;gap:5px;margin-bottom:6px;">
+        ${['1m','3m','6m','1y','all','custom'].map(p=>{
+          const ac=dashPeriodFilter===p;
+          return `<button data-period="${p}" style="padding:5px 8px;border-radius:6px;font-size:10px;font-family:inherit;cursor:pointer;flex:1;
+            background:${ac?'var(--accent)':'var(--surface)'};color:${ac?'var(--bg)':'var(--text-dim)'};
+            border:1px solid ${ac?'var(--accent)':'var(--border-lite)'};">${periodLabels[p]}</button>`;
+        }).join('')}
       </div>
 
-      <!-- 수익률 2개 강조 카드 -->
+      <!-- 직접입력 날짜 (custom 선택 시) -->
+      ${dashPeriodFilter==='custom'?`
+      <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center;">
+        <input type="date" id="dashDateStart" value="${dashCustomStart}"
+          style="flex:1;padding:6px 8px;background:var(--surface);border:1px solid var(--border-lite);
+            border-radius:6px;color:var(--text);font-size:11px;font-family:inherit;">
+        <span style="color:var(--text-faint);font-size:11px;flex-shrink:0;">~</span>
+        <input type="date" id="dashDateEnd" value="${dashCustomEnd||fmtDate(new Date())}"
+          style="flex:1;padding:6px 8px;background:var(--surface);border:1px solid var(--border-lite);
+            border-radius:6px;color:var(--text);font-size:11px;font-family:inherit;">
+        <button id="dashDateApply" style="padding:6px 12px;border-radius:6px;font-size:11px;
+          background:var(--accent);color:var(--bg);border:none;cursor:pointer;font-family:inherit;flex-shrink:0;">적용</button>
+      </div>`:''}
+
+      <!-- 수익률 방식 토글 -->
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:12px;">
+        <span style="font-size:10px;color:var(--text-faint);">수익률 기준:</span>
+        ${['real','asset'].map(m=>{
+          const ac=dashReturnMode===m, lbl=m==='real'?'실현손익':'자산변화';
+          return `<button data-rmode="${m}" style="padding:4px 10px;border-radius:6px;font-size:10px;font-family:inherit;cursor:pointer;
+            background:${ac?'var(--accent)':'var(--surface)'};color:${ac?'var(--bg)':'var(--text-dim)'};
+            border:1px solid ${ac?'var(--accent)':'var(--border-lite)'};">${lbl}</button>`;
+        }).join('')}
+      </div>
+
+      <!-- 수익률 강조 카드 2개 -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
         <div style="background:var(--surface);border-radius:8px;padding:12px;border-left:3px solid var(--accent);">
           <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">누적 수익률 (전체)</div>
           <div style="font-size:22px;font-weight:800;font-family:'JetBrains Mono',monospace;color:${cumR.color};">${cumR.val}</div>
-          <div style="font-size:10px;color:var(--text-faint);margin-top:2px;">실현손익 $${Math.round(cumReal).toLocaleString()}</div>
+          <div style="font-size:10px;color:var(--text-faint);margin-top:2px;">${modeLabel}</div>
         </div>
         <div style="background:var(--surface);border-radius:8px;padding:12px;border-left:3px solid var(--green);">
-          <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">기간별 수익률 (${periodLabels[dashPeriodFilter]})</div>
+          <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">기간 수익률 (${periodLabels[dashPeriodFilter]})</div>
           <div style="font-size:22px;font-weight:800;font-family:'JetBrains Mono',monospace;color:${perR.color};">${perR.val}</div>
-          <div style="font-size:10px;color:var(--text-faint);margin-top:2px;">기간 실현 $${Math.round(periodReal).toLocaleString()}</div>
+          <div style="font-size:10px;color:var(--text-faint);margin-top:2px;">${modeLabel}</div>
         </div>
       </div>
 
-      <!-- 기존 지표 카드 12개 -->
+      <!-- 지표 카드 12개 -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
         ${card('총자산','$'+Math.round(totalAsset).toLocaleString())}
         ${card('CAGR',p3.val,'연환산',p3.color)}
@@ -6087,7 +6118,7 @@ function renderDashboard(targetId = 'dashboardTabBody') {
         ${card('예수금','$'+Math.round(cash).toLocaleString())}
         ${card('현재 MDD','-'+currentMdd.toFixed(2)+'%','',currentMdd>10?'var(--red)':'var(--text)')}
         ${card('IA (갱신금)','$'+Math.round(ia).toLocaleString(),boosterOn?'🚀 부스트 ON':'')}
-        ${card('기간 시작 IA',firstRow?'$'+Math.round(firstRow.ia||0).toLocaleString():'-')}
+        ${card('기간 시작 자산',firstRow?'$'+Math.round(firstRow.totalAsset||firstRow.ia||0).toLocaleString():'-')}
       </div>
 
       <!-- 자산 추이 차트 -->
@@ -6175,6 +6206,29 @@ function renderDashboard(targetId = 'dashboardTabBody') {
         renderDashboard(targetId);
       });
     });
+
+    // 수익률 방식 토글 이벤트
+    el.querySelectorAll('[data-rmode]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        dashReturnMode = btn.dataset.rmode;
+        renderDashboard(targetId);
+      });
+    });
+
+    // 직접입력 날짜 적용
+    const applyBtn = el.querySelector('#dashDateApply');
+    if (applyBtn) {
+      applyBtn.addEventListener('click', ()=>{
+        const s = el.querySelector('#dashDateStart')?.value;
+        const e = el.querySelector('#dashDateEnd')?.value;
+        if (s) { dashCustomStart = s; dashCustomEnd = e || fmtDate(new Date()); }
+        renderDashboard(targetId);
+      });
+      // 날짜 입력 시 엔터로도 적용
+      [el.querySelector('#dashDateStart'), el.querySelector('#dashDateEnd')].forEach(inp=>{
+        inp?.addEventListener('keydown', ev=>{ if(ev.key==='Enter') applyBtn.click(); });
+      });
+    }
 
     // 일괄처리 버튼
     const bulkBtn = el.querySelector('#bulkProcessBtn');
