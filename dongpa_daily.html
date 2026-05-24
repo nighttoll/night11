@@ -5923,22 +5923,21 @@ function renderDashboard(targetId = 'dashboardTabBody') {
     const avgBuy     = holding > 0 ? positions.reduce((s,p)=>s+p.buyPrice*p.qty,0)/holding : 0;
 
     // ── 수익률 계산 ──────────────────────────────────────────
-    // 누적 수익률 (전체 기간, 실현손익 기준)
-    const initIA        = allRows[0]?.ia || ia || 1;
-    const cumReturnRate = initIA > 0 ? (cumReal / initIA * 100) : 0;
+    const initIA         = allRows[0]?.ia || ia || 1;
+    const startAssetAll  = allRows[0]?.totalAsset || initIA;   // 전체 시작 자산
+    const startAssetPer  = firstRow?.totalAsset || startAssetAll; // 기간 시작 자산
 
-    // 기간별 수익률 (선택 기간)
-    const periodReal      = filteredRows.reduce((s,r) => s + (r.realizedPnl || 0), 0);
-    const periodStartIA   = firstRow?.ia || ia || 1;
-    const periodStartAsset = firstRow?.totalAsset || 0;
+    // 기간 내 실현손익 합계
+    const periodReal = filteredRows.reduce((s,r) => s + (r.realizedPnl || 0), 0);
 
-    // 자산변화 기준 수익률
-    const assetChangeTotal  = initIA > 0 ? ((totalAsset - (allRows[0]?.totalAsset || initIA)) / (allRows[0]?.totalAsset || initIA) * 100) : 0;
-    const assetChangePeriod = periodStartAsset > 0 ? ((totalAsset - periodStartAsset) / periodStartAsset * 100) : 0;
+    // 수익률 계산 (분모: 시작 자산)
+    const cumRateReal    = startAssetAll > 0 ? (cumReal / startAssetAll * 100) : 0;
+    const cumRateAsset   = startAssetAll > 0 ? ((totalAsset - startAssetAll) / startAssetAll * 100) : 0;
+    const perRateReal    = startAssetPer > 0 ? (periodReal / startAssetPer * 100) : 0;
+    const perRateAsset   = startAssetPer > 0 ? ((totalAsset - startAssetPer) / startAssetPer * 100) : 0;
 
-    // 표시할 수익률 (모드에 따라 선택)
-    const cumRate    = dashReturnMode === 'real' ? cumReturnRate   : assetChangeTotal;
-    const periodRate = dashReturnMode === 'real' ? (periodStartIA > 0 ? periodReal / periodStartIA * 100 : 0) : assetChangePeriod;
+    const cumRate  = dashReturnMode === 'real' ? cumRateReal  : cumRateAsset;
+    const periodRate = dashReturnMode === 'real' ? perRateReal : perRateAsset;
 
     // CAGR + MDD
     let cagr = 0, mddVal = 0, currentMdd = 0;
@@ -6096,12 +6095,12 @@ function renderDashboard(targetId = 'dashboardTabBody') {
         <div style="background:var(--surface);border-radius:8px;padding:12px;border-left:3px solid var(--accent);">
           <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">누적 수익률 (전체)</div>
           <div style="font-size:22px;font-weight:800;font-family:'JetBrains Mono',monospace;color:${cumR.color};">${cumR.val}</div>
-          <div style="font-size:10px;color:var(--text-faint);margin-top:2px;">${modeLabel}</div>
+          <div style="font-size:10px;color:var(--text-faint);margin-top:2px;">${modeLabel} · 시작 $${Math.round(startAssetAll).toLocaleString()}</div>
         </div>
         <div style="background:var(--surface);border-radius:8px;padding:12px;border-left:3px solid var(--green);">
           <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">기간 수익률 (${periodLabels[dashPeriodFilter]})</div>
           <div style="font-size:22px;font-weight:800;font-family:'JetBrains Mono',monospace;color:${perR.color};">${perR.val}</div>
-          <div style="font-size:10px;color:var(--text-faint);margin-top:2px;">${modeLabel}</div>
+          <div style="font-size:10px;color:var(--text-faint);margin-top:2px;">${modeLabel} · 시작 $${Math.round(startAssetPer).toLocaleString()}</div>
         </div>
       </div>
 
