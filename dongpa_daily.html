@@ -5211,7 +5211,6 @@ function formatSheetDate(isoDate) {
 // 시트뷰 렌더링
 function renderSheetView() {
   // 마이그레이션 먼저 실행 (최초 1회)
-  // VERSION='2' → DATA.prices+RSI 기반 전체 날짜 행 생성
   const MIGRATE_VER = '3'; // 종가 없는 행 제외
   if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
     ACC.remove('dailyMigrated');  // 강제 재실행
@@ -5219,7 +5218,20 @@ function renderSheetView() {
   const didMigrate = migrateToDaily();
   if (didMigrate) {
     ACC.set('dailyMigratedVer', MIGRATE_VER);
-    console.log('[sheetview] v2 마이그레이션 완료');
+    console.log('[sheetview] 마이그레이션 완료');
+    
+    // 마이그레이션 직후 캐시된 Yahoo 종가로 최신 데이터 채우기
+    const cached = STORE.get('cachedYahooPrices', {});
+    if (Object.keys(cached).length > 0) {
+      console.log('[sheetview] 캐시 종가로 누락일 채우는 중...');
+      fillMissingDays(cached).then(r => {
+        if (r?.added > 0) {
+          console.log(`[sheetview] ${r.added}건 추가 완료`);
+          renderSheetView();  // 완료 후 재렌더
+        }
+      }).catch(e => console.warn('[sheetview] fillMissing 실패:', e.message));
+      return;  // fillMissingDays 완료 후 재렌더링됨
+    }
   }
   
   const dailyRows = getDailyRows();
@@ -6626,6 +6638,9 @@ function addYears(dateStr, years) {
           `<span style="color:var(--text-faint);font-size:9px;margin-left:4px;">${d}</span>`;
       }
 
+      // Yahoo 종가 캐시 저장 (시트뷰 마이그레이션 후 fillMissingDays에 사용)
+      STORE.set('cachedYahooPrices', closePrices);
+
       // 오늘 이미 처리했으면 스킵
       const lastDone = STORE.get('lastAutoProcessDate', '');
       if (lastDone === latestDate) {
@@ -6633,9 +6648,19 @@ function addYears(dateStr, years) {
         return;
       }
 
-      // 2. 4계좌 자동처리
+      // 2. 모든 계좌 마이그레이션 먼저 실행 (fillMissingDays 전에)
       const accounts = ACC.list();
       const originalId = ACC.current();
+      const MIGRATE_VER = '3';
+      for (const acc of accounts) {
+        STORE.set('currentAccountId', acc.id);
+        if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
+          ACC.remove('dailyMigrated');
+        }
+        const migrated = migrateToDaily();
+        if (migrated) ACC.set('dailyMigratedVer', MIGRATE_VER);
+      }
+      STORE.set('currentAccountId', originalId);
       let totalSells = 0, totalBuys = 0;
 
       for (const acc of accounts) {
