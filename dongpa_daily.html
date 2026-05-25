@@ -5211,29 +5211,81 @@ function formatSheetDate(isoDate) {
 // 시트뷰 렌더링
 function renderSheetView() {
   // 마이그레이션 먼저 실행 (최초 1회)
-  const MIGRATE_VER = '3'; // 종가 없는 행 제외
+  const MIGRATE_VER = '3';
   if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
-    ACC.remove('dailyMigrated');  // 강제 재실행
+    ACC.remove('dailyMigrated');
   }
   const didMigrate = migrateToDaily();
   if (didMigrate) {
     ACC.set('dailyMigratedVer', MIGRATE_VER);
     console.log('[sheetview] 마이그레이션 완료');
-    
-    // 마이그레이션 직후 캐시된 Yahoo 종가로 최신 데이터 채우기
-    const cached = STORE.get('cachedYahooPrices', {});
-    if (Object.keys(cached).length > 0) {
-      console.log('[sheetview] 캐시 종가로 누락일 채우는 중...');
-      fillMissingDays(cached).then(r => {
-        if (r?.added > 0) {
-          console.log(`[sheetview] ${r.added}건 추가 완료`);
-          renderSheetView();  // 완료 후 재렌더
+  }
+
+  // 누락일 체크 → 있으면 Yahoo fetch → fillMissingDays
+  if (!window._sheetFilling) {
+    const lastDate = getLastDailyRowDate();
+    const todayStr = fmtDate(new Date());
+    const missing  = lastDate ? getMissingTradingDays(lastDate, todayStr) : ['dummy'];
+
+    if (missing.length > 0) {
+      window._sheetFilling = true;
+
+      const cont = document.getElementById('sheetTableContainer');
+      if (cont) cont.innerHTML =
+        `<div style="padding:30px;text-align:center;color:var(--text-dim);">
+           <div>📡 최신 종가 받는 중... (${missing.length}일 누락)</div>
+         </div>`;
+      renderSheetSummary();
+
+      (async () => {
+        try {
+          let prices = {};
+
+          // 1. 캐시 시도
+          const cached = STORE.get('cachedYahooPrices', {});
+          const cacheHasData = missing.some(d => cached[d] != null);
+          
+          if (cacheHasData) {
+            prices = cached;
+            console.log('[sheetview] 캐시 사용:', Object.keys(prices).length, '건');
+          } else {
+            // 2. Yahoo 직접 fetch
+            const url = 'https://corsproxy.io/?' + encodeURIComponent(
+              'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo'
+            );
+            const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+            if (res.ok) {
+              const data = await res.json();
+              const result = data.chart.result[0];
+              const closes = result.indicators.quote[0].close;
+              const tss    = result.timestamp;
+              for (let i = 0; i < tss.length; i++) {
+                if (closes[i] != null) {
+                  const d = new Date(tss[i] * 1000);
+                  const ds = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+                  prices[ds] = closes[i];
+                }
+              }
+              STORE.set('cachedYahooPrices', prices);
+              console.log('[sheetview] Yahoo fetch 완료:', Object.keys(prices).length, '건');
+            }
+          }
+
+          if (Object.keys(prices).length > 0) {
+            const r = await fillMissingDays(prices);
+            console.log('[sheetview] fillMissingDays:', r?.added || 0, '건 추가');
+          }
+        } catch (e) {
+          console.warn('[sheetview] 종가 fetch 실패:', e.message);
+        } finally {
+          window._sheetFilling = false;
+          renderSheetView();
         }
-      }).catch(e => console.warn('[sheetview] fillMissing 실패:', e.message));
-      return;  // fillMissingDays 완료 후 재렌더링됨
+      })();
+      return;
     }
   }
-  
+
   const dailyRows = getDailyRows();
   const container = document.getElementById('sheetTableContainer');
   if (!container) return;
