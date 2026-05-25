@@ -5225,15 +5225,16 @@ function renderSheetView() {
   if (!window._sheetFilling) {
     const lastDate = getLastDailyRowDate();
     const todayStr = fmtDate(new Date());
-    const missing  = lastDate ? getMissingTradingDays(lastDate, todayStr) : ['dummy'];
+    const missing      = lastDate ? getMissingTradingDays(lastDate, todayStr) : ['dummy'];
+    const missedPast   = missing.filter(d => d < todayStr);  // 오늘 제외 (장 중)
 
-    if (missing.length > 0) {
+    if (missedPast.length > 0) {
       window._sheetFilling = true;
 
       const cont = document.getElementById('sheetTableContainer');
       if (cont) cont.innerHTML =
         `<div style="padding:30px;text-align:center;color:var(--text-dim);">
-           <div>📡 최신 종가 받는 중... (${missing.length}일 누락)</div>
+           <div>📡 최신 종가 받는 중... (${missedPast.length}일 누락)</div>
          </div>`;
       renderSheetSummary();
 
