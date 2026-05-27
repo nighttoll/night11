@@ -4439,27 +4439,41 @@ function applyImport(parsed) {
   // 과거 청산 거래 → history에 추가
   if (parsed.closedTrades && parsed.closedTrades.length > 0) {
     const existing = getHistory();
-    const incoming = parsed.closedTrades.map(t => {
-      // 매수일 먼저 정규화 (보통 연도 있는 정상 형식)
-      const buyDate = normalizeSheetDate(t.buyDate);
-      // 매도일 정규화 시 매수일 참조 (연도 없으면 매수일 기준 추정)
+    const incoming = [];
+    
+    parsed.closedTrades.forEach(t => {
+      const buyDate  = normalizeSheetDate(t.buyDate);
       const sellDate = normalizeSheetDate(t.sellDate, buyDate);
       
-      return {
+      // BUY 이벤트 (매수일 기준)
+      incoming.push({
+        id: 'IMPB' + Date.now() + Math.random().toString(36).slice(2, 6),
+        date: buyDate,
+        type: 'BUY',
+        mode: t.mode,
+        fillPrice: t.buyPrice,   // ← migration이 읽는 필드
+        buyPrice:  t.buyPrice,
+        qty: t.qty,
+        sellTarget: t.sellTarget,
+        boosted: t.boosted,
+      });
+      
+      // SELL 이벤트 (매도일 기준)
+      incoming.push({
         id: 'IMPH' + Date.now() + Math.random().toString(36).slice(2, 6),
         date: sellDate,
         type: t.exitType === 'EXPIRE' ? 'SELL_EXPIRE' : 'SELL_TARGET',
         mode: t.mode,
         buyDate: buyDate,
-        buyPrice: t.buyPrice,
+        buyPrice:  t.buyPrice,
         exitPrice: t.exitPrice,
         qty: t.qty,
         sellTarget: t.sellTarget,
         boosted: t.boosted,
         realizedPnl: t.realizedPnl,
-      };
+      });
     });
-    // 날짜 역순 정렬 (최신이 위)
+    
     incoming.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     ACC.set('history', [...incoming, ...existing]);
   }
@@ -4972,8 +4986,8 @@ function migrateToDaily() {
       rsi:  rsiData?.rsi ?? null,
       mode,
       buy: buy ? {
-        orderPrice: buy.orderPrice ?? buy.fillPrice,
-        fillPrice:  buy.fillPrice,
+        orderPrice: buy.orderPrice ?? buy.fillPrice ?? buy.buyPrice,
+        fillPrice:  buy.fillPrice  ?? buy.buyPrice,
         qty:        buy.qty,
         boosted:    buy.boosted,
         tier:       buy.tier,
@@ -5211,7 +5225,7 @@ function formatSheetDate(isoDate) {
 // 시트뷰 렌더링
 function renderSheetView() {
   // 마이그레이션 먼저 실행 (최초 1회)
-  const MIGRATE_VER = '3';
+  const MIGRATE_VER = '4'; // BUY history 추가
   if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
     ACC.remove('dailyMigrated');
   }
@@ -6704,7 +6718,7 @@ function addYears(dateStr, years) {
       // 2. 모든 계좌 마이그레이션 먼저 실행 (fillMissingDays 전에)
       const accounts = ACC.list();
       const originalId = ACC.current();
-      const MIGRATE_VER = '3';
+      const MIGRATE_VER = '4'; // BUY history 추가
       for (const acc of accounts) {
         STORE.set('currentAccountId', acc.id);
         if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
