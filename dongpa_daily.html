@@ -1621,17 +1621,18 @@ const SYNC_STATE = {
   lastSyncedAt: null,       // 마지막 동기화 시각
   pendingChanges: false,    // 저장 안 된 변경사항이 있는가
   unsubscribe: null,        // Firestore 실시간 리스너
+  suppressUpload: false,    // 다운로드 중 업로드 차단 플래그
 };
 
 // 사용자 데이터 경로
 function getUserDocRef() {
-  if (!window.firebaseUser || !firebaseDb) return null;
-  return firebaseDb.collection('users').doc(firebaseUser.uid);
+  if (!window.firebaseUser || !window.firebaseDb) return null;
+  return window.firebaseDb.collection('users').doc(window.firebaseUser.uid);
 }
 
 // 모든 LocalStorage 데이터를 Firestore에 업로드
 async function uploadAllDataToFirebase() {
-  if (!window.firebaseUser || !firebaseDb) {
+  if (!window.firebaseUser || !window.firebaseDb) {
     console.warn('[sync] Firebase 미준비');
     return false;
   }
@@ -1671,7 +1672,7 @@ async function uploadAllDataToFirebase() {
 
 // Firestore에서 모든 데이터를 다운로드해서 LocalStorage에 적용
 async function downloadAllDataFromFirebase() {
-  if (!window.firebaseUser || !firebaseDb) return false;
+  if (!window.firebaseUser || !window.firebaseDb) return false;
   
   setSyncStatus('syncing');
   
@@ -1717,7 +1718,7 @@ async function downloadAllDataFromFirebase() {
 
 // 실시간 리스너 시작 (다른 기기 변경사항 자동 감지)
 function startRealtimeSync() {
-  if (!window.firebaseUser || !firebaseDb) return;
+  if (!window.firebaseUser || !window.firebaseDb) return;
   
   // 이미 리스너 있으면 정리
   if (SYNC_STATE.unsubscribe) SYNC_STATE.unsubscribe();
@@ -1756,6 +1757,7 @@ function startRealtimeSync() {
 let uploadDebounceTimer = null;
 function scheduleUpload() {
   if (!SYNC_STATE.enabled) return;
+  if (SYNC_STATE.suppressUpload) return;  // 다운로드 중에는 업로드 안 함
   
   SYNC_STATE.pendingChanges = true;
   setSyncStatus('pending');
@@ -1956,12 +1958,54 @@ function initFirebaseAuth() {
       SYNC_STATE.enabled = true;
       console.log('[auth] 자동 로그인:', user.email);
       setSyncStatus('synced');
+
+      // 로그인 시 서버 데이터 자동 다운로드 (서버 우선)
+      // 단, 자동 다운로드 중에는 setItem 가로채기로 인한 재업로드 방지
+      try {
+        showToast('☁️ 클라우드 동기화 중...');
+        SYNC_STATE.suppressUpload = true;  // 다운로드 중 업로드 차단
+        const ok = await downloadAllDataFromFirebase();
+        SYNC_STATE.suppressUpload = false;
+        if (ok) {
+          showToast('✓ 최신 데이터 동기화 완료');
+          // UI 갱신
+          renderAll();
+          const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
+          if (activeTab === 'sheetview') renderSheetView();
+          else renderDashboardTab();
+        }
+      } catch (e) {
+        SYNC_STATE.suppressUpload = false;
+        console.warn('[auth] 자동 다운로드 실패:', e.message);
+      }
     } else {
       window.firebaseUser = null;
       SYNC_STATE.enabled = false;
       setSyncStatus('logged-out');
     }
   });
+}
+
+// 토스트 메시지
+function showToast(msg, duration = 2500) {
+  let toast = document.getElementById('appToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'appToast';
+    toast.style.cssText = `
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      background: var(--surface-2, #2a2a2a); color: var(--text, #fff);
+      padding: 10px 20px; border-radius: 20px; font-size: 13px;
+      border: 1px solid var(--border, #444); z-index: 99999;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4); opacity: 0;
+      transition: opacity 0.25s; white-space: nowrap; font-family: inherit;
+      max-width: 90vw; text-align: center;`;
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  if (toast._timer) clearTimeout(toast._timer);
+  requestAnimationFrame(() => { toast.style.opacity = '1'; });
+  toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, duration);
 }
 
 function estimatePeak() {
