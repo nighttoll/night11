@@ -1661,6 +1661,7 @@ async function uploadAllDataToFirebase() {
     SYNC_STATE.lastSyncedAt = new Date();
     SYNC_STATE.pendingChanges = false;
     setSyncStatus('synced');
+    _origSetItem('dongpa_lastSyncTime', Date.now().toString());
     console.log('[sync] 업로드 완료:', Object.keys(data).length, '개 키');
     return true;
   } catch (e) {
@@ -1768,17 +1769,25 @@ function scheduleUpload() {
   }, 1500);  // 1.5초 동안 변경 없으면 업로드
 }
 
-// LocalStorage setItem을 가로채서 자동 업로드 트리거
+// LocalStorage setItem을 가로채서 자동 업로드 트리거 + 수정시각 기록
 const _origSetItem = localStorage.setItem.bind(localStorage);
 const _origRemoveItem = localStorage.removeItem.bind(localStorage);
 
+const SYNC_META_KEYS = ['dongpa_localModTime', 'dongpa_lastSyncTime'];
+
 localStorage.setItem = function(key, value) {
   _origSetItem(key, value);
-  if (key.startsWith('dongpa_')) scheduleUpload();
+  if (key.startsWith('dongpa_') && !SYNC_META_KEYS.includes(key)) {
+    _origSetItem('dongpa_localModTime', Date.now().toString());
+    scheduleUpload();
+  }
 };
 localStorage.removeItem = function(key) {
   _origRemoveItem(key);
-  if (key.startsWith('dongpa_')) scheduleUpload();
+  if (key.startsWith('dongpa_') && !SYNC_META_KEYS.includes(key)) {
+    _origSetItem('dongpa_localModTime', Date.now().toString());
+    scheduleUpload();
+  }
 };
 
 // 디바이스 라벨 (어디서 마지막에 수정했는지 식별)
@@ -1959,24 +1968,53 @@ function initFirebaseAuth() {
       console.log('[auth] 자동 로그인:', user.email);
       setSyncStatus('synced');
 
-      // 로그인 시 서버 데이터 자동 다운로드 (서버 우선)
-      // 단, 자동 다운로드 중에는 setItem 가로채기로 인한 재업로드 방지
+      // 로그인 시 타임스탬프 비교 동기화
       try {
-        showToast('☁️ 클라우드 동기화 중...');
-        SYNC_STATE.suppressUpload = true;  // 다운로드 중 업로드 차단
-        const ok = await downloadAllDataFromFirebase();
-        SYNC_STATE.suppressUpload = false;
-        if (ok) {
-          showToast('✓ 최신 데이터 동기화 완료');
-          // UI 갱신
-          renderAll();
-          const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
-          if (activeTab === 'sheetview') renderSheetView();
-          else renderDashboardTab();
+        const ref = getUserDocRef();
+        if (!ref) return;
+        const doc = await ref.get();
+
+        const localModTime = parseInt(localStorage.getItem('dongpa_localModTime') || '0');
+        const serverTime   = doc.exists ? (doc.data().updatedAt?.toMillis?.() || 0) : 0;
+
+        // 둘 다 없으면 첫 로그인 → 로컬을 서버에 올림
+        if (localModTime === 0 && serverTime === 0) {
+          console.log('[sync] 양쪽 데이터 없음, 초기 업로드');
+          return;
+        }
+
+        // 서버가 더 새로움 → 다운로드
+        if (serverTime > localModTime + 1000) { // 1초 버퍼
+          showToast('☁️ 최신 데이터 받는 중...');
+          SYNC_STATE.suppressUpload = true;
+          const ok = await downloadAllDataFromFirebase();
+          SYNC_STATE.suppressUpload = false;
+          if (ok) {
+            _origSetItem('dongpa_localModTime', serverTime.toString());
+            _origSetItem('dongpa_lastSyncTime', serverTime.toString());
+            showToast('✓ 다운로드 완료');
+            renderAll();
+            const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
+            if (activeTab === 'sheetview') renderSheetView();
+            else renderDashboardTab();
+          }
+        }
+        // 로컬이 더 새로움 → 업로드
+        else if (localModTime > serverTime + 1000) {
+          showToast('☁️ 변경사항 업로드 중...');
+          const ok = await uploadAllDataToFirebase();
+          if (ok) {
+            _origSetItem('dongpa_lastSyncTime', Date.now().toString());
+            showToast('✓ 업로드 완료');
+          }
+        }
+        // 동기화 상태 → 아무것도 안 함
+        else {
+          console.log('[sync] 동기화 상태 (서버=로컬)');
         }
       } catch (e) {
         SYNC_STATE.suppressUpload = false;
-        console.warn('[auth] 자동 다운로드 실패:', e.message);
+        console.warn('[auth] 자동 동기화 실패:', e.message);
       }
     } else {
       window.firebaseUser = null;
