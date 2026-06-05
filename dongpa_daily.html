@@ -5054,12 +5054,20 @@ function migrateToDaily() {
       else if (boosterOn && pdd < ddExit) boosterOn = false;
     }
     
+    // 모드: 매수이벤트 > 매도 > RSI맵 > 이전 행
+    const mode = buy?.mode ?? sell?.mode ?? rsiData?.mode ?? (rows.length ? rows[rows.length-1].mode : 'SF');
+
+    // 1회시드 계산 (IA / 분할수)
+    const split = mode === 'SF'
+      ? (parseInt(document.getElementById('set_sfSplit')?.value) || 7)
+      : (parseInt(document.getElementById('set_agSplit')?.value) || 8);
+    const seed = ia > 0 ? Math.round(ia / split) : 0;
+
     // 매도 처리 (먼저)
     let realizedPnl = 0;
     if (sell) {
       realizedPnl = sell.realizedPnl || 0;
       cumulativeRealized += realizedPnl;
-      // buyDate 기준으로 제거 (없으면 buyPrice+qty 기준)
       if (sell.buyDate) {
         openPos = openPos.filter(p => p.buyDate !== sell.buyDate);
       } else {
@@ -5067,26 +5075,38 @@ function migrateToDaily() {
       }
       if (sell.exitPrice && sell.qty) cash += Math.round(sell.exitPrice * sell.qty);
     }
-    
+
     // 매수 처리
     if (buy && buy.fillPrice && buy.qty) {
-      openPos.push({ buyDate: date, buyPrice: buy.fillPrice, qty: buy.qty, mode: buy.mode });
+      openPos.push({
+        buyDate: date, buyPrice: buy.fillPrice, qty: buy.qty, mode: buy.mode,
+        sellTarget: buy.sellTarget, expireDate: buy.expireDate,
+        boosted: buy.boosted, tier: buy.tier, seed: buy.seed ?? seed,
+      });
       cash -= Math.round(buy.fillPrice * buy.qty);
     }
-    
+
     const holding   = openPos.reduce((s, p) => s + p.qty, 0);
     const evalAmt   = close ? Math.round(close * holding) : 0;
     const unrealPnl = close ? openPos.reduce((s, p) => s + Math.round((close - p.buyPrice) * p.qty), 0) : 0;
-    
-    // 모드: 매수이벤트 > RSI맵 > 이전 행
-    const mode = buy?.mode ?? sell?.mode ?? rsiData?.mode ?? (rows.length ? rows[rows.length-1].mode : null);
-    
-    // 1회시드 계산 (IA / 분할수)
-    const split = mode === 'SF'
-      ? (parseInt(document.getElementById('set_sfSplit')?.value) || 7)
-      : (parseInt(document.getElementById('set_agSplit')?.value) || 8);
-    const seed = ia > 0 ? Math.round(ia / split) : 0;
-    
+
+    // 오늘 신규 LOC 매수 주문(pendingBuy) 계산 — 다음 거래일 체결 대상
+    let pendingBuy = null;
+    if (close && ia > 0 && openPos.length < split) {
+      const buyPct = mode === 'SF'
+        ? (parseFloat(document.getElementById('set_sfBuy')?.value) || 4.5) / 100
+        : (parseFloat(document.getElementById('set_agBuy')?.value) || 3.6) / 100;
+      const normalPct = (parseFloat(document.getElementById('set_normal')?.value) || 100) / 100;
+      const boostPct  = (parseFloat(document.getElementById('set_boost')?.value)  || 120) / 100;
+      const seedFactor = boosterOn ? boostPct : normalPct;
+      const seedAmt = Math.round((ia / split) * seedFactor);
+      const orderPrice = Math.round(close * (1 - buyPct) * 100) / 100;
+      const qty = orderPrice > 0 ? Math.floor(seedAmt / orderPrice) : 0;
+      if (qty > 0) {
+        pendingBuy = { date, mode, orderPrice, qty, seed: seedAmt, boosted: boosterOn, tier: openPos.length + 1 };
+      }
+    }
+
     rows.push({
       date,
       close,
@@ -5111,6 +5131,8 @@ function migrateToDaily() {
         realizedPnl,
       } : null,
       skipped: skip ? { orderPrice: skip.orderPrice, qty: skip.qty } : null,
+      pendingBuy,                              // ← 추가
+      openPositions: openPos.map(p => ({...p})), // ← 추가 (핵심)
       ia,
       cash:               Math.round(cash),
       evalAmt,
@@ -5332,7 +5354,7 @@ function formatSheetDate(isoDate) {
 // 시트뷰 렌더링
 function renderSheetView() {
   // 마이그레이션 먼저 실행 (최초 1회)
-  const MIGRATE_VER = '4'; // BUY history 추가
+  const MIGRATE_VER = '5'; // openPositions+pendingBuy 행 저장
   if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
     ACC.remove('dailyMigrated');
   }
@@ -6876,7 +6898,7 @@ function addYears(dateStr, years) {
       // 2. 모든 계좌 마이그레이션 먼저 실행 (fillMissingDays 전에)
       const accounts = ACC.list();
       const originalId = ACC.current();
-      const MIGRATE_VER = '4'; // BUY history 추가
+      const MIGRATE_VER = '5'; // openPositions+pendingBuy 행 저장
       for (const acc of accounts) {
         STORE.set('currentAccountId', acc.id);
         if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
