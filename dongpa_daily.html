@@ -1640,29 +1640,36 @@ async function uploadAllDataToFirebase() {
   setSyncStatus('syncing');
   
   try {
-    // localStorage의 모든 dongpa_* 키 수집
+    // 동기화 제외 키 (파생/캐시 데이터 — 로컬에서 재생성 가능, Firestore 1MB 초과 방지)
+    // dailyRows: 마이그레이션으로 재생성 / cachedYahooPrices: 야후에서 재취득
+    const isExcludedKey = (k) =>
+      k.includes(':dailyRows') ||
+      k === 'dongpa_cachedYahooPrices' ||
+      k.endsWith(':dailyMigrated') ||
+      k.endsWith(':dailyMigratedVer');
+
+    // localStorage의 모든 dongpa_* 키 수집 (제외 키 빼고)
     const data = {};
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.startsWith('dongpa_')) {
-        // Firestore는 / 등 특수문자 제한 있음, key를 안전하게 인코딩
+      if (key && key.startsWith('dongpa_') && !isExcludedKey(key)) {
         const safeKey = key.replace(/dongpa_/, '').replace(/[\.\$\#\[\]\/]/g, '_');
         data[safeKey] = localStorage.getItem(key);
       }
     }
-    
+
     const ref = getUserDocRef();
     await ref.set({
       data: data,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       device: getDeviceLabel(),
     }, { merge: true });
-    
+
     SYNC_STATE.lastSyncedAt = new Date();
     SYNC_STATE.pendingChanges = false;
     setSyncStatus('synced');
     _origSetItem('dongpa_lastSyncTime', Date.now().toString());
-    console.log('[sync] 업로드 완료:', Object.keys(data).length, '개 키');
+    console.log('[sync] 업로드 완료:', Object.keys(data).length, '개 키 (dailyRows 제외)');
     return true;
   } catch (e) {
     console.error('[sync] 업로드 실패:', e);
@@ -1690,21 +1697,37 @@ async function downloadAllDataFromFirebase() {
     
     const cloudData = doc.data().data;
     let appliedCount = 0;
-    
-    // LocalStorage의 dongpa_* 키 모두 지우고 새로 입력
+
+    // 제외 키는 다운로드 시 지우지 않고 로컬 보존 (재생성 데이터)
+    const isExcludedKey = (k) =>
+      k.includes(':dailyRows') ||
+      k === 'dongpa_cachedYahooPrices' ||
+      k.endsWith(':dailyMigrated') ||
+      k.endsWith(':dailyMigratedVer');
+
+    // LocalStorage의 dongpa_* 키 중 제외 키 빼고 모두 지우고 새로 입력
     const keysToRemove = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.startsWith('dongpa_')) keysToRemove.push(key);
+      if (key && key.startsWith('dongpa_') && !isExcludedKey(key)) keysToRemove.push(key);
     }
     keysToRemove.forEach(k => localStorage.removeItem(k));
-    
+
     // 클라우드 데이터 적용
     for (const [safeKey, value] of Object.entries(cloudData)) {
       const originalKey = 'dongpa_' + safeKey;
       localStorage.setItem(originalKey, value);
       appliedCount++;
     }
+
+    // 다운로드한 positions/history와 로컬 dailyRows가 불일치할 수 있으므로
+    // 마이그레이션 플래그를 리셋해 다음 시트뷰 진입 시 재생성하도록 유도
+    const accIds = (() => { try { return JSON.parse(cloudData['accounts'] || '[]').map(a=>a.id); } catch { return []; } })();
+    accIds.forEach(id => {
+      localStorage.removeItem('dongpa_acc:' + id + ':dailyMigrated');
+      localStorage.removeItem('dongpa_acc:' + id + ':dailyMigratedVer');
+      localStorage.removeItem('dongpa_acc:' + id + ':dailyRows');
+    });
     
     SYNC_STATE.lastSyncedAt = doc.data().updatedAt?.toDate?.() || new Date();
     setSyncStatus('synced');
@@ -1774,17 +1797,23 @@ const _origSetItem = localStorage.setItem.bind(localStorage);
 const _origRemoveItem = localStorage.removeItem.bind(localStorage);
 
 const SYNC_META_KEYS = ['dongpa_localModTime', 'dongpa_lastSyncTime'];
+// 파생/캐시 키: 변경돼도 업로드 트리거 안 함 (Firestore 용량 절약)
+const isDerivedKey = (k) =>
+  k.includes(':dailyRows') ||
+  k === 'dongpa_cachedYahooPrices' ||
+  k.endsWith(':dailyMigrated') ||
+  k.endsWith(':dailyMigratedVer');
 
 localStorage.setItem = function(key, value) {
   _origSetItem(key, value);
-  if (key.startsWith('dongpa_') && !SYNC_META_KEYS.includes(key)) {
+  if (key.startsWith('dongpa_') && !SYNC_META_KEYS.includes(key) && !isDerivedKey(key)) {
     _origSetItem('dongpa_localModTime', Date.now().toString());
     scheduleUpload();
   }
 };
 localStorage.removeItem = function(key) {
   _origRemoveItem(key);
-  if (key.startsWith('dongpa_') && !SYNC_META_KEYS.includes(key)) {
+  if (key.startsWith('dongpa_') && !SYNC_META_KEYS.includes(key) && !isDerivedKey(key)) {
     _origSetItem('dongpa_localModTime', Date.now().toString());
     scheduleUpload();
   }
