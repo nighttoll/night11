@@ -3122,8 +3122,8 @@ function renderPositions() {
   const prevClose = parseFloat(document.getElementById('prevClose').value) || 0;
   let totalEval = 0, totalCost = 0;
   positions.forEach(p => {
-    totalEval += prevClose * p.qty;
-    totalCost += p.buyPrice * p.qty;
+    totalEval += prevClose * (p.qty||0);
+    totalCost += (p.buyPrice||0) * (p.qty||0);
   });
   const unrealizedPnl = totalEval - totalCost;
   const cash = parseFloat(document.getElementById('cash').value) || 0;
@@ -3179,15 +3179,15 @@ function renderPositions() {
         <div class="position-row2">
           <div class="pos-field">
             <div class="pos-field-label">매수가</div>
-            <div class="pos-field-value">$${p.buyPrice.toFixed(2)}</div>
+            <div class="pos-field-value">$${Number(p.buyPrice||0).toFixed(2)}</div>
           </div>
           <div class="pos-field">
             <div class="pos-field-label">수량</div>
-            <div class="pos-field-value">${p.qty}주</div>
+            <div class="pos-field-value">${p.qty||0}주</div>
           </div>
           <div class="pos-field">
             <div class="pos-field-label">목표 (${distToTarget >= 0 ? '+' : ''}${distToTarget.toFixed(1)}%)</div>
-            <div class="pos-field-value target">$${p.sellTarget.toFixed(2)}</div>
+            <div class="pos-field-value target">$${Number(p.sellTarget||0).toFixed(2)}</div>
           </div>
           <div class="pos-field">
             <div class="pos-field-label">손절기한</div>
@@ -3697,6 +3697,42 @@ function setMode(m) {
 document.getElementById('modeSFBtn').addEventListener('click', () => setMode('SF'));
 document.getElementById('modeAGBtn').addEventListener('click', () => setMode('AG'));
 
+// ====================================================
+// 견고한 SOXL 종가 fetch (멀티 프록시 병렬, 첫 성공 사용)
+// 반환: { 'YYYY-MM-DD': price, ... }
+// ====================================================
+async function fetchSoxlPrices(rangeStr = '3mo') {
+  const target = `https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=${rangeStr}`;
+  const proxies = [
+    (u) => 'https://corsproxy.io/?' + encodeURIComponent(u),
+    (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+    (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+  ];
+
+  const tryOne = async (proxyFn) => {
+    const res = await fetch(proxyFn(target), { signal: AbortSignal.timeout(12000) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const result = data.chart.result[0];
+    const closes = result.indicators.quote[0].close;
+    const tss    = result.timestamp;
+    const prices = {};
+    for (let i = 0; i < tss.length; i++) {
+      if (closes[i] != null) {
+        const d = new Date(tss[i] * 1000);
+        prices[`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`] = closes[i];
+      }
+    }
+    if (!Object.keys(prices).length) throw new Error('빈 데이터');
+    return prices;
+  };
+
+  // 3개 프록시 동시 시도 → 가장 빨리 성공한 것 사용
+  const prices = await Promise.any(proxies.map(tryOne));
+  STORE.set('cachedYahooPrices', prices);
+  return prices;
+}
+
 async function fetchYahooPrice() {
   const btn = document.getElementById('fetchBtn');
   const hint = document.getElementById('fetchHint');
@@ -3704,22 +3740,14 @@ async function fetchYahooPrice() {
   hint.textContent = '야후파이낸스 조회 중...';
   
   try {
-    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo';
-    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
-    const res = await fetch(proxyUrl);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    const result = data.chart.result[0];
-    const closes = result.indicators.quote[0].close;
-    const timestamps = result.timestamp;
-    let latestPrice = null, latestTime = null;
-    for (let i = closes.length - 1; i >= 0; i--) {
-      if (closes[i] !== null) { latestPrice = closes[i]; latestTime = new Date(timestamps[i] * 1000); break; }
-    }
-    if (latestPrice === null) throw new Error('가격 없음');
+    const prices = await fetchSoxlPrices();
+    const dates = Object.keys(prices).sort();
+    const latestDate = dates[dates.length - 1];
+    const latestPrice = prices[latestDate];
+    if (latestPrice == null) throw new Error('가격 없음');
     document.getElementById('prevClose').value = latestPrice.toFixed(2);
     btn.classList.add('success'); btn.textContent = '✓';
-    hint.textContent = `${fmtDate(latestTime)} 종가: $${latestPrice.toFixed(2)} (야후)`;
+    hint.textContent = `${latestDate} 종가: $${latestPrice.toFixed(2)} (야후)`;
     saveFormState();
     calculateOrder();
     setTimeout(() => { btn.classList.remove('success'); btn.textContent = '🌐 자동'; btn.disabled = false; }, 1500);
@@ -4790,22 +4818,11 @@ async function bulkProcessAllAccounts() {
   btn.style.opacity = '0.6';
   btn.textContent = '⏳ 종가 받는 중...';
 
-  // ── 1. 종가 한 번만 받기 ────────────────────────────────────
+  // ── 1. 종가 한 번만 받기 (멀티 프록시) ──────────────────────
   let closePrices = {};
   try {
-    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
-      'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo'
-    );
-    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    const result = data.chart.result[0];
-    const closes = result.indicators.quote[0].close;
-    const tss    = result.timestamp;
-    for (let i = 0; i < tss.length; i++) {
-      if (closes[i] != null) { const _d=new Date(tss[i]*1000); closePrices[`${_d.getUTCFullYear()}-${String(_d.getUTCMonth()+1).padStart(2,'0')}-${String(_d.getUTCDate()).padStart(2,'0')}`]=closes[i]; }
-    }
-    console.log('[bulk] 야후 종가:', Object.keys(closePrices).join(', '));
+    closePrices = await fetchSoxlPrices();
+    console.log('[bulk] 야후 종가:', Object.keys(closePrices).length, '건');
   } catch (e) {
     console.warn('[bulk] 야후 실패:', e.message);
     btn.textContent = '🔄 시트 폴백 중...';
@@ -4833,43 +4850,51 @@ async function bulkProcessAllAccounts() {
     return;
   }
 
+  // 최신 종가 미리 계산 + 화면 반영
+  const sortedDates = Object.keys(closePrices).sort();
+  const latestDate  = sortedDates[sortedDates.length - 1];
+  const latestClose = latestDate ? closePrices[latestDate] : 0;
+
+  // 헤더 + prevClose 필드에 즉시 표시
+  const priceEl = document.getElementById('headerPrice');
+  if (priceEl && latestClose) {
+    const d = latestDate.slice(2).replace(/-/g, '.');
+    priceEl.innerHTML =
+      `<span style="color:var(--accent);font-weight:600;">$${latestClose.toFixed(2)}</span>` +
+      `<span style="color:var(--text-faint);font-size:9px;margin-left:4px;">${d}</span>`;
+  }
+  const pcInput = document.getElementById('prevClose');
+  if (pcInput && latestClose) pcInput.value = latestClose.toFixed(2);
+
   // ── 2. 4계좌 순회 ──────────────────────────────────────────
   const accounts   = ACC.list();
   const originalId = ACC.current();
   const allResults = [];
 
-  // 최신 종가 미리 계산
-  const sortedDates = Object.keys(closePrices).sort();
-  const latestDate  = sortedDates[sortedDates.length - 1];
-  const latestClose = latestDate ? closePrices[latestDate] : 0;
-
   btn.textContent = '⏳ 처리 중...';
 
   for (const acc of accounts) {
     try {
-      // 1. 누락된 과거 날짜 처리 (dailyRows)
+      // 마이그레이션 먼저 (시트뷰 안 들어가도 dailyRows 보장)
+      STORE.set('currentAccountId', acc.id);
+      const MV = '4';
+      if (ACC.get('dailyMigratedVer', '') !== MV) { ACC.remove('dailyMigrated'); }
+      if (migrateToDaily()) ACC.set('dailyMigratedVer', MV);
+
+      // fillMissingDays가 dailyRows 처리 + positions/history/cash 동기화까지 담당
       const fillResult = await fillMissingDays(closePrices, acc.id);
-      
-      // 2. 오늘 매수체결 판정 (pendingBuys → positions/history)
-      const buyResult = processBuysForAccount(acc.id, latestClose);
-      
-      // 3. 오늘 청산 판정 (positions → history)
-      const sellResult = processSellsForAccount(acc.id, latestClose);
-      
-      // 4. fillMissingDays todayOrder → pendingBuys 저장
-      if (fillResult?.todayOrder) {
-        STORE.set('currentAccountId', acc.id);
-        ACC.set('pendingBuys', [fillResult.todayOrder]);
+
+      // 마이그레이션만 되고 누락일이 없던 경우에도 정합성 보장
+      if (!fillResult || fillResult.added === 0) {
+        syncStoresFromDailyRows(acc.id);
       }
-      
+
       allResults.push({
         acc,
         result: {
           ...fillResult,
-          buysFilled: buyResult.filled.length,
-          sellsClosed: sellResult.length,
           todayOrder: fillResult?.todayOrder,
-          todaySell: sellResult[0] || null,
+          todaySell: fillResult?.todaySell || null,
         }
       });
     } catch (e) {
@@ -5315,6 +5340,7 @@ function renderSheetView() {
   if (didMigrate) {
     ACC.set('dailyMigratedVer', MIGRATE_VER);
     console.log('[sheetview] 마이그레이션 완료');
+    syncStoresFromDailyRows();  // 보유/기록 정합성 즉시 확보
   }
 
   // 누락일 체크 → 있으면 Yahoo fetch → fillMissingDays
@@ -5324,8 +5350,12 @@ function renderSheetView() {
     const missing      = lastDate ? getMissingTradingDays(lastDate, todayStr) : ['dummy'];
     const missedPast   = missing.filter(d => d < todayStr);  // 오늘 제외 (장 중)
 
-    if (missedPast.length > 0) {
+    // 같은 (lastDate→today) 범위는 한 번만 시도 (무한루프 방지)
+    const fillKey = (lastDate || '') + '→' + todayStr;
+
+    if (missedPast.length > 0 && window._sheetFillKey !== fillKey) {
       window._sheetFilling = true;
+      window._sheetFillKey = fillKey;  // 이 범위 시도했음 기록
 
       const cont = document.getElementById('sheetTableContainer');
       if (cont) cont.innerHTML =
@@ -5335,47 +5365,38 @@ function renderSheetView() {
       renderSheetSummary();
 
       (async () => {
+        let added = 0;
         try {
           let prices = {};
 
           // 1. 캐시 시도
           const cached = STORE.get('cachedYahooPrices', {});
-          const cacheHasData = missing.some(d => cached[d] != null);
+          const cacheHasData = missedPast.some(d => cached[d] != null);
           
           if (cacheHasData) {
             prices = cached;
             console.log('[sheetview] 캐시 사용:', Object.keys(prices).length, '건');
           } else {
-            // 2. Yahoo 직접 fetch
-            const url = 'https://corsproxy.io/?' + encodeURIComponent(
-              'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo'
-            );
-            const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-            if (res.ok) {
-              const data = await res.json();
-              const result = data.chart.result[0];
-              const closes = result.indicators.quote[0].close;
-              const tss    = result.timestamp;
-              for (let i = 0; i < tss.length; i++) {
-                if (closes[i] != null) {
-                  const d = new Date(tss[i] * 1000);
-                  const ds = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-                  prices[ds] = closes[i];
-                }
-              }
-              STORE.set('cachedYahooPrices', prices);
+            // 2. Yahoo 직접 fetch (멀티 프록시)
+            try {
+              prices = await fetchSoxlPrices();
               console.log('[sheetview] Yahoo fetch 완료:', Object.keys(prices).length, '건');
+            } catch (fe) {
+              console.warn('[sheetview] Yahoo 실패:', fe.message);
             }
           }
 
           if (Object.keys(prices).length > 0) {
             const r = await fillMissingDays(prices);
-            console.log('[sheetview] fillMissingDays:', r?.added || 0, '건 추가');
+            added = r?.added || 0;
+            console.log('[sheetview] fillMissingDays:', added, '건 추가');
           }
         } catch (e) {
           console.warn('[sheetview] 종가 fetch 실패:', e.message);
         } finally {
           window._sheetFilling = false;
+          // 행이 추가됐으면 lastDate가 전진했으니 재렌더 (더 채울 게 있으면 새 fillKey로 시도)
+          // 0건이면 fillKey 동일 → 재렌더해도 fetch 안 함 → 정상 테이블 표시
           renderSheetView();
         }
       })();
@@ -5835,6 +5856,8 @@ async function fillMissingDays(closePrices, accId) {
   if (newRows.length) {
     setDailyRows([...rows, ...newRows]);
     console.log(`[fill:${accId||'cur'}] ${newRows.length}개 행 추가`);
+    // dailyRows → positions/history/cash 동기화 (보유/기록/오늘 탭 정합성)
+    syncStoresFromDailyRows();
   }
 
   const lastNewRow = newRows[newRows.length - 1];
@@ -5844,6 +5867,75 @@ async function fillMissingDays(closePrices, accId) {
     todayOrder: lastNewRow?.pendingBuy || null,
     todaySell:  newRows.find(r => r.sell)?.sell || null,
   };
+}
+
+// ====================================================
+// dailyRows를 단일 진실 소스로 → positions/history/cash/pendingBuys 재구성
+// 시트뷰·보유·기록·오늘 탭이 항상 일치하도록 보장
+// ====================================================
+function syncStoresFromDailyRows(accId) {
+  const savedId = ACC.current();
+  if (accId) STORE.set('currentAccountId', accId);
+
+  const rows = getDailyRows();
+  if (!rows.length) { if (accId) STORE.set('currentAccountId', savedId); return; }
+
+  const lastRow = rows[rows.length - 1];
+
+  // 1. 기록(history) 재구성: 모든 행의 buy/sell 이벤트
+  const history = [];
+  for (const r of rows) {
+    if (r.buy && r.buy.fillPrice && r.buy.qty) {
+      history.push({
+        id: 'HB_' + r.date,
+        date: r.date, type: 'BUY', mode: r.mode,
+        orderPrice: r.buy.orderPrice, fillPrice: r.buy.fillPrice, qty: r.buy.qty,
+        boosted: r.buy.boosted, tier: r.buy.tier, seed: r.buy.seed,
+        sellTarget: r.buy.sellTarget, expireDate: r.buy.expireDate,
+      });
+    }
+    if (r.sell && r.sell.qty) {
+      history.push({
+        id: 'HS_' + r.date,
+        date: r.date,
+        type: r.sell.type === 'EXPIRE' ? 'SELL_EXPIRE' : 'SELL_TARGET',
+        mode: r.sell.mode || r.mode,
+        buyDate: r.sell.buyDate, buyPrice: r.sell.buyPrice,
+        exitPrice: r.sell.exitPrice, qty: r.sell.qty,
+        sellTarget: r.sell.sellTarget, boosted: r.sell.boosted,
+        realizedPnl: r.sell.realizedPnl,
+      });
+    }
+  }
+  history.sort((a, b) => (b.date || '').localeCompare(a.date || ''));  // 최신순
+  ACC.set('history', history);
+
+  // 2. 보유(positions) 재구성: 마지막 행의 openPositions = 현재 보유
+  const positions = (lastRow.openPositions || []).map(p => ({
+    id: 'P_' + p.buyDate + '_' + (p.buyPrice || 0),
+    buyDate: p.buyDate, buyPrice: p.buyPrice, qty: p.qty,
+    mode: p.mode, boosted: p.boosted, tier: p.tier, seed: p.seed,
+    sellTarget: p.sellTarget, expireDate: p.expireDate,
+    status: 'open', sellRegistered: true,
+  }));
+  setPositions(positions);
+
+  // 3. 오늘 매수주문(pendingBuys) 재구성
+  ACC.set('pendingBuys', lastRow.pendingBuy ? [lastRow.pendingBuy] : []);
+
+  // 4. 현금/평단/IA 동기화
+  const fs = ACC.get('formState', {});
+  ACC.set('formState', {
+    ...fs,
+    cash: Math.round(lastRow.cash || 0),
+    prevClose: lastRow.close || fs.prevClose,
+    ia: Math.round(lastRow.ia || fs.ia || 0),
+    peakPrice: lastRow.peakPrice || fs.peakPrice,
+  });
+
+  console.log(`[sync] 보유 ${positions.length}개, 기록 ${history.length}건, 현금 ${Math.round(lastRow.cash||0)}`);
+
+  if (accId) STORE.set('currentAccountId', savedId);
 }
 
 // settings DOM → 객체
@@ -6743,26 +6835,10 @@ function addYears(dateStr, years) {
     if (priceEl) priceEl.textContent = '⏳ 종가 받는 중...';
 
     try {
-      // 1. 종가 받기
+      // 1. 종가 받기 (멀티 프록시)
       let closePrices = {};
       try {
-        const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
-          'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo'
-        );
-        const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-        if (res.ok) {
-          const data = await res.json();
-          const result = data.chart.result[0];
-          const closes = result.indicators.quote[0].close;
-          const tss = result.timestamp;
-          for (let i = 0; i < tss.length; i++) {
-            if (closes[i] != null) {
-              const d = new Date(tss[i] * 1000);
-              const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-              closePrices[dateStr] = closes[i];
-            }
-          }
-        }
+        closePrices = await fetchSoxlPrices();
       } catch (e) {
         try {
           const r = await fetchClosePriceFromSheet();
@@ -6810,22 +6886,13 @@ function addYears(dateStr, years) {
         if (migrated) ACC.set('dailyMigratedVer', MIGRATE_VER);
       }
       STORE.set('currentAccountId', originalId);
-      let totalSells = 0, totalBuys = 0;
 
       for (const acc of accounts) {
         try {
-          await fillMissingDays(closePrices, acc.id);
-          const br = processBuysForAccount(acc.id, latestClose);
-          const sr = processSellsForAccount(acc.id, latestClose);
-          totalBuys  += br.filled.length;
-          totalSells += sr.length;
-          // 새 pendingBuy 저장
-          const dr = ACC.getFor(acc.id, 'dailyRows', []);
-          const lastRow = dr[dr.length - 1];
-          if (lastRow?.pendingBuy) {
-            STORE.set('currentAccountId', acc.id);
-            ACC.set('pendingBuys', [lastRow.pendingBuy]);
-          }
+          // fillMissingDays가 dailyRows 처리 + positions/history/cash/pendingBuys 동기화 모두 담당
+          const r = await fillMissingDays(closePrices, acc.id);
+          // 누락일 없어도 마이그레이션 직후 정합성 보장
+          if (!r || r.added === 0) syncStoresFromDailyRows(acc.id);
         } catch (e) {
           console.warn('[init] 계좌 처리 실패:', acc.name, e.message);
         }
@@ -6834,7 +6901,7 @@ function addYears(dateStr, years) {
       STORE.set('currentAccountId', originalId);
       STORE.set('lastAutoProcessDate', latestDate);
 
-      console.log(`[init] 자동처리 완료: 체결${totalBuys} 청산${totalSells}`);
+      console.log('[init] 자동처리 완료');
 
       // 처리 결과 대시보드 갱신
       const activeTab = document.querySelector('.tab-btn.active')?.dataset?.tab;
