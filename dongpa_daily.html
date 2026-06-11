@@ -3758,6 +3758,19 @@ async function fetchSoxlPrices(rangeStr = '3mo') {
 
   // 3개 프록시 동시 시도 → 가장 빨리 성공한 것 사용
   const prices = await Promise.any(proxies.map(tryOne));
+
+  // ── 미확정 봉 제거: 미국 장이 아직 안 닫혔으면 "오늘(ET)" 봉은 현재가이므로 제외 ──
+  // ET 기준 현재 시각/날짜 계산
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const etToday = `${nowET.getFullYear()}-${String(nowET.getMonth()+1).padStart(2,'0')}-${String(nowET.getDate()).padStart(2,'0')}`;
+  const etHour = nowET.getHours();
+  // 정규장 마감 16:00 ET (조기마감일 고려해 16:05 버퍼)
+  const marketClosed = etHour >= 16 || (etHour === 16 && nowET.getMinutes() >= 5);
+  if (!marketClosed && prices[etToday] != null) {
+    delete prices[etToday];
+    console.log('[fetch] 장중 미확정 봉 제외:', etToday);
+  }
+
   STORE.set('cachedYahooPrices', prices);
   return prices;
 }
