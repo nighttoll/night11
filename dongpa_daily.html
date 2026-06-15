@@ -2195,23 +2195,12 @@ async function autoProcessDay() {
   let closePrice = null;
   let priceSource = '';
   
-  // 1. 야후에서 오늘 종가 받기
+  // 1. 야후에서 종가 받기 (멀티 프록시 + 미확정 봉 제외)
   try {
-    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo';
-    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
-    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    const result = data.chart.result[0];
-    const closes = result.indicators.quote[0].close;
-    const timestamps = result.timestamp;
-    for (let i = closes.length - 1; i >= 0; i--) {
-      if (closes[i] !== null) {
-        closePrice = closes[i];
-        { const _pd=new Date(timestamps[i]*1000); priceSource=`${_pd.getUTCFullYear()}-${String(_pd.getUTCMonth()+1).padStart(2,'0')}-${String(_pd.getUTCDate()).padStart(2,'0')}`; }
-        break;
-      }
-    }
+    const prices = await fetchSoxlPrices();
+    const dates = Object.keys(prices).sort();
+    priceSource = dates[dates.length - 1];
+    closePrice = prices[priceSource];
   } catch (e) {
     // 야후 실패 → 시트 폴백 시도
     hint.textContent = '🔄 야후 실패, 시트에서 종가 받는 중...';
@@ -4590,7 +4579,8 @@ function applyImport(parsed) {
   
   // 과거 청산 거래 → history에 추가
   if (parsed.closedTrades && parsed.closedTrades.length > 0) {
-    const existing = getHistory();
+    // 재이식 시 이전 이식 항목(IMPB/IMPH) 제거 후 새로 추가 (중복 방지)
+    const existing = getHistory().filter(h => !String(h.id||'').startsWith('IMPB') && !String(h.id||'').startsWith('IMPH'));
     const incoming = [];
     
     parsed.closedTrades.forEach(t => {
@@ -4661,28 +4651,11 @@ function applyImport(parsed) {
         if (result?.added > 0) {
           console.log(`[import] 시트 종가 ${sheetPriceCount}개로 ${result.added}개 행 추가`);
         }
-        // 추가로 야후에서 최근 데이터도 시도
+        // 추가로 야후에서 최근 데이터도 시도 (멀티 프록시 + 미확정 봉 제외)
         try {
-          const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(
-            'https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=3mo'
-          );
-          const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
-          if (res.ok) {
-            const data = await res.json();
-            const r = data.chart.result[0];
-            const closes = r.indicators.quote[0].close;
-            const tss = r.timestamp;
-            const yahooPrices = {};
-            for (let i = 0; i < tss.length; i++) {
-              if (closes[i] != null) {
-                const d = new Date(tss[i]*1000);
-                const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-                yahooPrices[dateStr] = closes[i];
-              }
-            }
-            const r2 = await fillMissingDays(yahooPrices);
-            if (r2?.added > 0) console.log(`[import] 야후 ${r2.added}개 행 추가`);
-          }
+          const yahooPrices = await fetchSoxlPrices();
+          const r2 = await fillMissingDays(yahooPrices);
+          if (r2?.added > 0) console.log(`[import] 야후 ${r2.added}개 행 추가`);
         } catch (e) { /* 야후 실패는 무시 */ }
       } catch (e) {
         console.warn('[import] dailyRows 갱신 실패:', e.message);
@@ -5080,8 +5053,8 @@ function migrateToDaily() {
     const rsiData  = rsiMap[date]   ?? null;
     const ev       = eventMap[date] ?? { buys: [], sells: [], skips: [] };
     
-    const buy  = ev.buys[0]  ?? null;
-    const sell = ev.sells[0] ?? null;
+    const buy  = ev.buys[0]  ?? null;   // 표시용 (첫 건)
+    const sell = ev.sells[0] ?? null;   // 표시용 (첫 건)
     const skip = ev.skips[0] ?? null;
     
     // 종가 없으면 행 생성 안 함 (휴장 또는 데이터 미비)
@@ -5105,27 +5078,35 @@ function migrateToDaily() {
       : (parseInt(document.getElementById('set_agSplit')?.value) || 8);
     const seed = ia > 0 ? Math.round(ia / split) : 0;
 
-    // 매도 처리 (먼저)
+    // ── 매도 처리 (같은 날 여러 건 모두) ──
     let realizedPnl = 0;
-    if (sell) {
-      realizedPnl = sell.realizedPnl || 0;
-      cumulativeRealized += realizedPnl;
-      if (sell.buyDate) {
-        openPos = openPos.filter(p => p.buyDate !== sell.buyDate);
+    for (const s of ev.sells) {
+      realizedPnl += s.realizedPnl || 0;
+      cumulativeRealized += s.realizedPnl || 0;
+      if (s.buyDate) {
+        // 같은 buyDate 중 수량 일치 우선, 없으면 첫 번째 하나만 제거
+        let removeIdx = openPos.findIndex(p => p.buyDate === s.buyDate && p.qty === s.qty);
+        if (removeIdx < 0) removeIdx = openPos.findIndex(p => p.buyDate === s.buyDate);
+        if (removeIdx >= 0) openPos.splice(removeIdx, 1);
       } else {
-        openPos = openPos.filter(p => !(p.buyPrice === sell.buyPrice && p.qty === sell.qty));
+        const removeIdx = openPos.findIndex(p => p.buyPrice === s.buyPrice && p.qty === s.qty);
+        if (removeIdx >= 0) openPos.splice(removeIdx, 1);
       }
-      if (sell.exitPrice && sell.qty) cash += Math.round(sell.exitPrice * sell.qty);
+      if (s.exitPrice && s.qty) cash += Math.round(s.exitPrice * s.qty);
     }
 
-    // 매수 처리
-    if (buy && buy.fillPrice && buy.qty) {
+    // ── 매수 처리 (같은 날 여러 건 모두, 중복 방지) ──
+    for (const b of ev.buys) {
+      if (!b.fillPrice || !b.qty) continue;
+      // 동일 buyDate+buyPrice+qty 가 이미 있으면 중복 이벤트로 간주하고 스킵
+      const dup = openPos.some(p => p.buyDate === date && p.buyPrice === b.fillPrice && p.qty === b.qty);
+      if (dup) continue;
       openPos.push({
-        buyDate: date, buyPrice: buy.fillPrice, qty: buy.qty, mode: buy.mode,
-        sellTarget: buy.sellTarget, expireDate: buy.expireDate,
-        boosted: buy.boosted, tier: buy.tier, seed: buy.seed ?? seed,
+        buyDate: date, buyPrice: b.fillPrice, qty: b.qty, mode: b.mode,
+        sellTarget: b.sellTarget, expireDate: b.expireDate,
+        boosted: b.boosted, tier: b.tier, seed: b.seed ?? seed,
       });
-      cash -= Math.round(buy.fillPrice * buy.qty);
+      cash -= Math.round(b.fillPrice * b.qty);
     }
 
     const holding   = openPos.reduce((s, p) => s + p.qty, 0);
@@ -5173,6 +5154,20 @@ function migrateToDaily() {
         realizedPnl,
       } : null,
       skipped: skip ? { orderPrice: skip.orderPrice, qty: skip.qty } : null,
+      // 같은 날 다중 거래 보존 (history 재구성용)
+      buys:  ev.buys.length  > 1 ? ev.buys.map(b => ({
+        orderPrice: b.orderPrice ?? b.fillPrice ?? b.buyPrice,
+        fillPrice: b.fillPrice ?? b.buyPrice, qty: b.qty,
+        boosted: b.boosted, tier: b.tier, seed: b.seed,
+        sellTarget: b.sellTarget, expireDate: b.expireDate, mode: b.mode,
+      })) : undefined,
+      sells: ev.sells.length > 1 ? ev.sells.map(s => ({
+        exitPrice: s.exitPrice, qty: s.qty,
+        type: s.type === 'SELL_TARGET' ? 'TARGET' : 'EXPIRE',
+        buyDate: s.buyDate, buyPrice: s.buyPrice, mode: s.mode,
+        sellTarget: s.sellTarget, boosted: s.boosted,
+        realizedPnl: s.realizedPnl,
+      })) : undefined,
       pendingBuy,                              // ← 추가
       openPositions: openPos.map(p => ({...p})), // ← 추가 (핵심)
       ia,
@@ -5396,7 +5391,7 @@ function formatSheetDate(isoDate) {
 // 시트뷰 렌더링
 function renderSheetView() {
   // 마이그레이션 먼저 실행 (최초 1회)
-  const MIGRATE_VER = '5'; // openPositions+pendingBuy 행 저장
+  const MIGRATE_VER = '6'; // 같은날 다중거래 처리
   if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
     ACC.remove('dailyMigrated');
   }
@@ -5946,37 +5941,43 @@ function syncStoresFromDailyRows(accId) {
 
   const lastRow = rows[rows.length - 1];
 
-  // 1. 기록(history) 재구성: 모든 행의 buy/sell 이벤트
+  // 1. 기록(history) 재구성: 모든 행의 buy/sell 이벤트 (다중 거래 지원)
   const history = [];
   for (const r of rows) {
-    if (r.buy && r.buy.fillPrice && r.buy.qty) {
+    // 매수: buys 배열 있으면 전체, 없으면 단일 buy
+    const buyList = r.buys || (r.buy ? [r.buy] : []);
+    buyList.forEach((b, i) => {
+      if (!b.fillPrice || !b.qty) return;
       history.push({
-        id: 'HB_' + r.date,
-        date: r.date, type: 'BUY', mode: r.mode,
-        orderPrice: r.buy.orderPrice, fillPrice: r.buy.fillPrice, qty: r.buy.qty,
-        boosted: r.buy.boosted, tier: r.buy.tier, seed: r.buy.seed,
-        sellTarget: r.buy.sellTarget, expireDate: r.buy.expireDate,
+        id: 'HB_' + r.date + (i ? '_' + i : ''),
+        date: r.date, type: 'BUY', mode: b.mode || r.mode,
+        orderPrice: b.orderPrice, fillPrice: b.fillPrice, qty: b.qty,
+        boosted: b.boosted, tier: b.tier, seed: b.seed,
+        sellTarget: b.sellTarget, expireDate: b.expireDate,
       });
-    }
-    if (r.sell && r.sell.qty) {
+    });
+    // 매도: sells 배열 있으면 전체, 없으면 단일 sell
+    const sellList = r.sells || (r.sell ? [r.sell] : []);
+    sellList.forEach((s, i) => {
+      if (!s.qty) return;
       history.push({
-        id: 'HS_' + r.date,
+        id: 'HS_' + r.date + (i ? '_' + i : ''),
         date: r.date,
-        type: r.sell.type === 'EXPIRE' ? 'SELL_EXPIRE' : 'SELL_TARGET',
-        mode: r.sell.mode || r.mode,
-        buyDate: r.sell.buyDate, buyPrice: r.sell.buyPrice,
-        exitPrice: r.sell.exitPrice, qty: r.sell.qty,
-        sellTarget: r.sell.sellTarget, boosted: r.sell.boosted,
-        realizedPnl: r.sell.realizedPnl,
+        type: s.type === 'EXPIRE' ? 'SELL_EXPIRE' : 'SELL_TARGET',
+        mode: s.mode || r.mode,
+        buyDate: s.buyDate, buyPrice: s.buyPrice,
+        exitPrice: s.exitPrice, qty: s.qty,
+        sellTarget: s.sellTarget, boosted: s.boosted,
+        realizedPnl: s.realizedPnl,
       });
-    }
+    });
   }
   history.sort((a, b) => (b.date || '').localeCompare(a.date || ''));  // 최신순
   ACC.set('history', history);
 
   // 2. 보유(positions) 재구성: 마지막 행의 openPositions = 현재 보유
-  const positions = (lastRow.openPositions || []).map(p => ({
-    id: 'P_' + p.buyDate + '_' + (p.buyPrice || 0),
+  const positions = (lastRow.openPositions || []).map((p, idx) => ({
+    id: 'P_' + p.buyDate + '_' + (p.buyPrice || 0) + '_' + (p.qty || 0) + '_' + idx,
     buyDate: p.buyDate, buyPrice: p.buyPrice, qty: p.qty,
     mode: p.mode, boosted: p.boosted, tier: p.tier, seed: p.seed,
     sellTarget: p.sellTarget, expireDate: p.expireDate,
@@ -6336,17 +6337,24 @@ function renderDashboard(targetId = 'dashboardTabBody') {
     const periodLabels = {'1m':'1개월','3m':'3개월','6m':'6개월','1y':'1년','all':'전체','custom':'직접입력'};
     const modeLabel = dashReturnMode==='real'?'실현손익 기준':'자산변화 기준';
 
-    // ── 오늘 주문 수집 ───────────────────────────────────────
+    // ── 오늘 주문 수집 (중복 제거) ───────────────────────────
     const todayOrders = [];
+    const seenOrders = new Set();
+    const pushOrder = (o) => {
+      const key = [o.accName, o.type, o.orderPrice ?? o.sellTarget ?? '', o.qty, o.buyDate ?? ''].join('|');
+      if (seenOrders.has(key)) return;
+      seenOrders.add(key);
+      todayOrders.push(o);
+    };
     const srcAccs = dashAccFilter === 'all' ? accounts : accounts.filter(a=>a.id===dashAccFilter);
     for(const acc of srcAccs){
       ACC.getFor(acc.id,'pendingBuys',[]).forEach(o =>
-        todayOrders.push({...o, accName:acc.name, accColor:acc.color, type:'BUY'}));
+        pushOrder({...o, accName:acc.name, accColor:acc.color, type:'BUY'}));
       ACC.getFor(acc.id,'positions',[]).filter(p=>!p.status||p.status==='open').forEach(p=>{
         if(p.expireDate&&p.expireDate<=todayStr)
-          todayOrders.push({...p,accName:acc.name,accColor:acc.color,type:'SELL_EXPIRE'});
+          pushOrder({...p,accName:acc.name,accColor:acc.color,type:'SELL_EXPIRE'});
         else if(prevClose>0&&p.sellTarget&&prevClose>=p.sellTarget)
-          todayOrders.push({...p,accName:acc.name,accColor:acc.color,type:'SELL_TARGET'});
+          pushOrder({...p,accName:acc.name,accColor:acc.color,type:'SELL_TARGET'});
       });
     }
 
@@ -6940,7 +6948,7 @@ function addYears(dateStr, years) {
       // 2. 모든 계좌 마이그레이션 먼저 실행 (fillMissingDays 전에)
       const accounts = ACC.list();
       const originalId = ACC.current();
-      const MIGRATE_VER = '5'; // openPositions+pendingBuy 행 저장
+      const MIGRATE_VER = '6'; // 같은날 다중거래 처리
       for (const acc of accounts) {
         STORE.set('currentAccountId', acc.id);
         if (ACC.get('dailyMigratedVer', '') !== MIGRATE_VER) {
