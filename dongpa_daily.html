@@ -4884,6 +4884,8 @@ async function bulkProcessAllAccounts() {
   // ── 2. 4계좌 순회 ──────────────────────────────────────────
   const accounts   = ACC.list();
   const originalId = ACC.current();
+  // 모드는 시장 전체 공통 → 현재 활성 계좌에 지정된 오늘 모드(SF/AG)를 모든 계좌 채움에 적용
+  const liveMode   = ACC.getFor(originalId, 'todayMode', '') || '';
   const allResults = [];
 
   btn.textContent = '⏳ 처리 중...';
@@ -4897,7 +4899,8 @@ async function bulkProcessAllAccounts() {
       if (migrateToDaily()) ACC.set('dailyMigratedVer', MV);
 
       // fillMissingDays가 dailyRows 처리 + positions/history/cash 동기화까지 담당
-      const fillResult = await fillMissingDays(closePrices, acc.id);
+      // redoLast: 최신 일자를 다시 처리해서 모드 변경(예: 공세→안전)을 즉시 반영
+      const fillResult = await fillMissingDays(closePrices, acc.id, { liveMode, redoLast: true });
 
       // 마이그레이션만 되고 누락일이 없던 경우에도 정합성 보장
       if (!fillResult || fillResult.added === 0) {
@@ -5878,11 +5881,29 @@ function renderSheetSummary() {
 // closePrices = { 'YYYY-MM-DD': price }
 // accId 생략시 현재 계좌
 // ====================================================
-async function fillMissingDays(closePrices, accId) {
+async function fillMissingDays(closePrices, accId, opts = {}) {
   if (accId) STORE.set('currentAccountId', accId);
 
-  const lastDate = getLastDailyRowDate();
-  if (!lastDate) return { added: 0 };
+  // 시장 전체 모드(안전 SF / 공세 AG). 내장 RSI가 과거에서 끊겨도
+  // 사용자가 오늘 탭에서 지정한 모드를 채움 로직에 전달한다.
+  const liveMode = opts.liveMode || '';
+  // 가격맵 로컬 복사 (redoLast 시 종가 보강용; 호출자 객체 변형 방지)
+  const prices = { ...(closePrices || {}) };
+
+  let rows = getDailyRows();
+  if (!rows.length) return { added: 0 };
+
+  // redoLast: 마지막 행을 되돌려 다시 처리 → 모드 변경이 즉시 반영되도록.
+  // (종가가 있어야 재처리 가능. 일괄처리 버튼이 "작동 안 함"으로 보이던 원인)
+  if (opts.redoLast && rows.length >= 2) {
+    const last = rows[rows.length - 1];
+    if (last && last.close != null) {
+      if (prices[last.date] == null) prices[last.date] = last.close;
+      rows = rows.slice(0, -1);
+    }
+  }
+
+  const lastDate = rows[rows.length - 1].date;
 
   const todayStr = fmtDate(new Date());
   if (lastDate >= todayStr) return { added: 0 };
@@ -5893,7 +5914,6 @@ async function fillMissingDays(closePrices, accId) {
   console.log(`[fill:${accId||'cur'}] 누락 ${missing.length}건 (${missing[0]}~${missing[missing.length-1]})`);
 
   const settings = getSettingsObj();
-  const rows     = getDailyRows();
   let   lastRow  = rows[rows.length - 1];
 
   // openPositions 없으면 재건
@@ -5905,9 +5925,9 @@ async function fillMissingDays(closePrices, accId) {
   const skippedDates = [];
 
   for (const date of missing) {
-    const close = closePrices?.[date];
+    const close = prices?.[date];
     if (!close) { skippedDates.push(date); continue; }
-    const newRow = processOneDailyRow(date, close, lastRow, settings);
+    const newRow = processOneDailyRow(date, close, lastRow, settings, liveMode);
     newRows.push(newRow);
     lastRow = newRow;
   }
@@ -6044,8 +6064,10 @@ function rebuildOpenPositions(lastRow, allRows) {
 // processOneDailyRow: 하루치 dailyRow 생성
 // lastRow.openPositions 으로 포지션 추적
 // ====================================================
-function processOneDailyRow(date, close, lastRow, settings) {
-  const mode   = lastRow?.mode   || 'SF';
+function processOneDailyRow(date, close, lastRow, settings, liveMode) {
+  // 모드 결정: ① 해당 날짜의 QQQ-RSI 모드(modeMap) ② 사용자가 설정한 현재 모드(liveMode)
+  //          ③ 직전 행 모드 — 이전엔 직전 모드만 그대로 물려받아 안전/공세가 안 바뀌었음
+  const mode   = modeMap[date] || liveMode || lastRow?.mode || 'SF';
   const ia     = lastRow?.ia     || 0;
   let cash     = lastRow?.cash   || 0;
   let boosterOn   = lastRow?.boosterOn   || false;
@@ -6948,6 +6970,8 @@ function addYears(dateStr, years) {
       // 2. 모든 계좌 마이그레이션 먼저 실행 (fillMissingDays 전에)
       const accounts = ACC.list();
       const originalId = ACC.current();
+      // 시장 전체 모드(SF/AG): 활성 계좌에 지정된 오늘 모드를 자동 채움에 적용
+      const liveMode = ACC.getFor(originalId, 'todayMode', '') || '';
       const MIGRATE_VER = '6'; // 같은날 다중거래 처리
       for (const acc of accounts) {
         STORE.set('currentAccountId', acc.id);
@@ -6962,7 +6986,7 @@ function addYears(dateStr, years) {
       for (const acc of accounts) {
         try {
           // fillMissingDays가 dailyRows 처리 + positions/history/cash/pendingBuys 동기화 모두 담당
-          const r = await fillMissingDays(closePrices, acc.id);
+          const r = await fillMissingDays(closePrices, acc.id, { liveMode });
           // 누락일 없어도 마이그레이션 직후 정합성 보장
           if (!r || r.added === 0) syncStoresFromDailyRows(acc.id);
         } catch (e) {
