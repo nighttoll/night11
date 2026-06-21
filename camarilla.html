@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>카마릴라 · SOXL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0c0f14; --panel:#151a22; --panel2:#1b212b; --border:#272f3b;
+    --text:#e7eef6; --dim:#8a97a8; --faint:#5b6675;
+    --gold:#e3b341; --gold-dim:#7a6529; --green:#3fb950; --red:#f0623e; --blue:#5d9df0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    line-height:1.5; padding:0 0 60px; -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+  .wrap{max-width:760px;margin:0 auto;padding:0 16px}
+
+  header{
+    border-bottom:1px solid var(--border);
+    padding:18px 0 16px; margin-bottom:22px;
+    background:linear-gradient(180deg,#10141b 0%,var(--bg) 100%);
+  }
+  .brand{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .brand h1{font-size:23px;font-weight:700;letter-spacing:-.01em}
+  .brand .tick{font-size:12px;color:var(--gold);letter-spacing:.18em;text-transform:uppercase;font-weight:500}
+  .brand .sub{font-size:12px;color:var(--faint);margin-left:auto}
+
+  .pricebar{
+    display:flex;align-items:center;gap:14px;margin-top:14px;
+    padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:10px;
+  }
+  .pricebar .live{font-size:22px;font-weight:700}
+  .pricebar .meta{font-size:11px;color:var(--dim);line-height:1.35}
+  .pricebar .meta b{color:var(--text);font-weight:500}
+  .fetchbtn{
+    margin-left:auto;background:var(--panel2);color:var(--text);
+    border:1px solid var(--border);border-radius:8px;padding:9px 14px;
+    font-family:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;
+    transition:border-color .15s,background .15s;
+  }
+  .fetchbtn:hover{border-color:var(--gold-dim);background:#202734}
+  .fetchbtn:disabled{opacity:.5;cursor:default}
+  .fetchbtn.ok{border-color:var(--green);color:var(--green)}
+  .fetchbtn.err{border-color:var(--red);color:var(--red)}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  @media(max-width:600px){.grid{grid-template-columns:1fr}}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
+  .card h2{font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.12em;font-weight:500;margin-bottom:14px}
+
+  .field{margin-bottom:12px}
+  .field:last-child{margin-bottom:0}
+  .field label{display:block;font-size:12px;color:var(--dim);margin-bottom:5px}
+  .field .hint{font-size:10.5px;color:var(--faint);margin-top:3px}
+  .field input{
+    width:100%;background:#0e131a;border:1px solid var(--border);border-radius:8px;
+    padding:10px 12px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:15px;
+    text-align:right;transition:border-color .15s;
+  }
+  .field input:focus{outline:none;border-color:var(--gold-dim)}
+  .field.seed input{font-size:17px;color:var(--gold)}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+  /* ── 저항선 사다리 ── */
+  .ladder-card{padding:16px 16px 12px}
+  .ladder{position:relative;height:300px;margin:6px 4px 0}
+  .rung{position:absolute;left:0;right:0;display:flex;align-items:center;gap:8px;transform:translateY(50%)}
+  .rung .line{flex:1;height:1px;background:var(--border)}
+  .rung .tag{font-size:10px;color:var(--faint);width:26px;flex:none}
+  .rung .px{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--dim);flex:none}
+  .rung.r4{z-index:3}
+  .rung.r4 .line{height:2px;background:linear-gradient(90deg,transparent,var(--gold))}
+  .rung.r4 .tag{color:var(--gold);font-weight:700}
+  .rung.r4 .px{color:var(--gold);font-weight:700;font-size:14px}
+  .rung.base .line{background:#3a4452}
+  .rung.base .tag,.rung.base .px{color:var(--text)}
+  .rung.sup .line{background:#1f2530}
+  .rung.sup .tag,.rung.sup .px{color:#465061}
+  .marker{position:absolute;left:0;right:0;transform:translateY(50%);z-index:4;display:flex;align-items:center;gap:6px}
+  .marker .dot{width:7px;height:7px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 3px rgba(93,157,240,.2)}
+  .marker .lbl{font-size:10px;color:var(--blue);font-weight:500;background:var(--bg);padding:0 4px}
+  .marker .mline{flex:1;height:1px;background:repeating-linear-gradient(90deg,var(--blue) 0 4px,transparent 4px 8px);opacity:.5}
+
+  /* ── 오늘의 주문 ── */
+  .plan{margin-top:16px;background:linear-gradient(135deg,#1a1f29,#151a22);border:1px solid var(--gold-dim);border-radius:14px;padding:20px}
+  .plan .status{font-size:13px;font-weight:500;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+  .plan .status .pip{width:9px;height:9px;border-radius:50%}
+  .plan .status.wait{color:var(--dim)} .plan .status.wait .pip{background:var(--dim)}
+  .plan .status.go{color:var(--green)} .plan .status.go .pip{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .plan-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:600px){.plan-grid{grid-template-columns:1fr;gap:14px}}
+  .big{}
+  .big .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px}
+  .big .v{font-family:'JetBrains Mono',monospace;font-size:34px;font-weight:700;line-height:1}
+  .big .v.gold{color:var(--gold)} .big .v.green{color:var(--green)}
+  .big .note{font-size:11px;color:var(--faint);margin-top:5px}
+
+  .steps{margin-top:18px;border-top:1px solid var(--border);padding-top:14px}
+  .steps li{list-style:none;display:flex;gap:10px;font-size:12.5px;color:var(--dim);margin-bottom:8px}
+  .steps li:last-child{margin-bottom:0}
+  .steps .n{color:var(--gold);font-weight:700;font-family:'JetBrains Mono',monospace;flex:none}
+  .steps b{color:var(--text);font-weight:500}
+
+  .levelpick{display:flex;gap:6px;margin-top:10px}
+  .levelpick button{
+    flex:1;background:#0e131a;border:1px solid var(--border);border-radius:7px;
+    padding:7px 0;color:var(--dim);font-family:inherit;font-size:12px;cursor:pointer;transition:.12s;
+  }
+  .levelpick button:hover{border-color:var(--gold-dim)}
+  .levelpick button.active{background:var(--gold);color:#0c0f14;border-color:var(--gold);font-weight:700}
+
+  footer{text-align:center;font-size:11px;color:var(--faint);margin-top:28px;line-height:1.7}
+  footer .warn{color:var(--gold);opacity:.8}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="brand">
+      <h1>카마릴라</h1>
+      <span class="tick">SOXL · 4차 저항 돌파</span>
+      <span class="sub">당일 매수 → 종가 MOC 청산</span>
+    </div>
+    <div class="pricebar">
+      <div>
+        <div class="live mono" id="livePx">—</div>
+        <div class="meta" id="liveMeta">야후에서 종가를 받아오세요</div>
+      </div>
+      <button class="fetchbtn" id="fetchBtn" onclick="loadYahoo()">🌐 야후 종가 받기</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="grid">
+    <!-- 입력 -->
+    <section class="card">
+      <h2>입력</h2>
+      <div class="field">
+        <label>기준일 (전 거래일) — 자동 입력</label>
+        <input class="mono" id="baseDate" value="—" readonly style="text-align:left;color:var(--dim);font-size:13px">
+      </div>
+      <div class="row2">
+        <div class="field"><label>고가 (H)</label><input class="mono" id="hi" type="number" step="0.01" oninput="calc()"></div>
+        <div class="field"><label>저가 (L)</label><input class="mono" id="lo" type="number" step="0.01" oninput="calc()"></div>
+      </div>
+      <div class="field"><label>종가 (C)</label><input class="mono" id="cl" type="number" step="0.01" oninput="calc()"></div>
+      <div class="field">
+        <label>배수계수</label>
+        <input class="mono" id="factor" type="number" step="0.1" value="1.1" oninput="calc()">
+        <div class="hint">카마릴라 기본값 1.1</div>
+      </div>
+      <div class="field seed">
+        <label>시드 ($) — 이번 진입에 쓸 금액</label>
+        <input class="mono" id="seed" type="number" step="100" value="10000" oninput="calc()">
+        <div class="hint">동파 노는 현금을 직접 입력</div>
+      </div>
+    </section>
+
+    <!-- 저항선 사다리 -->
+    <section class="card ladder-card">
+      <h2>저항선 사다리</h2>
+      <div class="ladder" id="ladder"></div>
+    </section>
+  </div>
+
+  <!-- 오늘의 주문 -->
+  <section class="plan">
+    <div class="status wait" id="status"><span class="pip"></span><span id="statusText">기준 데이터 입력 대기</span></div>
+    <div class="plan-grid">
+      <div class="big">
+        <div class="k">트리거가 (돌파 매수)</div>
+        <div class="v gold mono" id="trigPx">—</div>
+        <div class="note" id="trigNote"></div>
+      </div>
+      <div class="big">
+        <div class="k">매수 수량</div>
+        <div class="v green mono" id="qty">—</div>
+        <div class="note" id="qtyNote"></div>
+      </div>
+    </div>
+
+    <div class="levelpick" id="levelPick">
+      <button data-lv="1" onclick="pick(1)">R1</button>
+      <button data-lv="2" onclick="pick(2)">R2</button>
+      <button data-lv="3" onclick="pick(3)">R3</button>
+      <button data-lv="4" class="active" onclick="pick(4)">R4</button>
+    </div>
+
+    <ul class="steps">
+      <li><span class="n">1</span><span>장중 SOXL이 <b>트리거가</b>를 돌파하면 <b id="s1qty">—</b> 매수<span id="s1gap"></span></span></li>
+      <li><span class="n">2</span><span>장 시작가가 이미 트리거가 이상이면(갭상승) <b>시가에 바로 매수</b></span></li>
+      <li><span class="n">3</span><span>종가에 <b>MOC(시장가 종가)</b>로 전량 매도 — 오버나이트 없음</span></li>
+      <li><span class="n">4</span><span>돌파 안 하면 매수 안 함. 시드는 그대로 동파가 사용</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    <div>4차 저항선 = 전일종가 + (전일고가 − 전일저가) × 배수계수 ÷ 2</div>
+    <div class="warn">⚠ 동파 종가매수와 현금 공유 시 증거금(마진) 계좌 필요 · 카마릴라 매매는 잦으니 수수료 확인</div>
+  </footer>
+</main>
+
+<script>
+const DIV = {1:12, 2:6, 3:4, 4:2};  // 1~4차 저항선 분모
+let level = 4;
+let livePrice = null;
+
+const pad = n => String(n).padStart(2,'0');
+const $ = id => document.getElementById(id);
+
+// 설정 복원
+try{
+  const s = JSON.parse(localStorage.getItem('cama_cfg')||'{}');
+  if(s.seed) $('seed').value = s.seed;
+  if(s.factor) $('factor').value = s.factor;
+  if(s.level){ level = s.level; }
+}catch(e){}
+
+function saveCfg(){
+  localStorage.setItem('cama_cfg', JSON.stringify({
+    seed:$('seed').value, factor:$('factor').value, level
+  }));
+}
+
+function pick(lv){
+  level = lv;
+  document.querySelectorAll('#levelPick button').forEach(b=>
+    b.classList.toggle('active', +b.dataset.lv===lv));
+  calc(); saveCfg();
+}
+
+function resistances(){
+  const h=+$('hi').value, l=+$('lo').value, c=+$('cl').value, f=+$('factor').value;
+  if(!h || !l || !c) return null;
+  const range = h - l;
+  const r = {};
+  for(const k of [1,2,3,4]) r[k] = Math.round((c + range*f/DIV[k])*100)/100;
+  return {h,l,c,range,r};
+}
+
+function calc(){
+  const d = resistances();
+  if(!d){ return; }
+  const trig = d.r[level];
+  const seed = +$('seed').value || 0;
+  const qty = trig>0 ? Math.floor(seed/trig) : 0;
+
+  $('trigPx').textContent = '$'+trig.toFixed(2);
+  $('trigNote').textContent = 'R'+level+' · 종가 대비 +'+(((trig-d.c)/d.c)*100).toFixed(2)+'%';
+  $('qty').textContent = qty.toLocaleString()+'주';
+  $('qtyNote').textContent = '예상 비용 $'+Math.round(qty*trig).toLocaleString();
+  $('s1qty').textContent = qty.toLocaleString()+'주';
+
+  // 상태: 현재가가 트리거 돌파했는지
+  const st=$('status'), stt=$('statusText'), gap=$('s1gap');
+  if(livePrice!=null){
+    if(livePrice >= trig){
+      st.className='status go'; stt.textContent='돌파! 지금 매수 가능 (현재가 $'+livePrice.toFixed(2)+')';
+      gap.textContent='';
+    }else{
+      st.className='status wait';
+      const need=((trig-livePrice)/livePrice*100);
+      stt.textContent='대기 — 현재가 $'+livePrice.toFixed(2)+', 트리거까지 +'+need.toFixed(2)+'%';
+      gap.textContent=' (현재가에서 +'+need.toFixed(2)+'%)';
+    }
+  }else{
+    st.className='status wait'; stt.textContent='기준 데이터 준비됨 — 장중 트리거가 돌파 시 매수';
+    gap.textContent='';
+  }
+  drawLadder(d, trig);
+  saveCfg();
+}
+
+function drawLadder(d, trig){
+  const el=$('ladder'); el.innerHTML='';
+  const H=el.clientHeight||300;
+  // 스케일: 종가 아래 ~ R4 위. 현재가가 범위를 벗어나면 포함하도록 확장.
+  let lo = d.c - d.range*0.15;
+  let hi = d.r[4] + d.range*0.20;
+  if(livePrice!=null){
+    if(livePrice > hi) hi = livePrice + d.range*0.10;
+    if(livePrice < lo) lo = livePrice - d.range*0.10;
+  }
+  const span = (hi-lo)||1;
+  const y = px => H - ((px-lo)/span)*H;   // 위가 고가
+
+  // 지지선(참고, 흐리게) — 종가 아래 대칭 1개만
+  const s1 = Math.round((d.c - d.range*1.1/DIV[1])*100)/100;
+  addRung('sup','S1', s1, y(s1));
+  // 종가(기준)
+  addRung('base','종가', d.c, y(d.c));
+  // R1~R4
+  for(const k of [1,2,3,4]){
+    addRung('r'+k+(k===4?' r4':''), 'R'+k, d.r[k], y(d.r[k]));
+  }
+  // 현재가 마커
+  if(livePrice!=null && livePrice>=lo && livePrice<=hi){
+    const m=document.createElement('div'); m.className='marker'; m.style.top=y(livePrice)+'px';
+    m.innerHTML='<span class="dot"></span><span class="lbl">현재 $'+livePrice.toFixed(2)+'</span><span class="mline"></span>';
+    el.appendChild(m);
+  }
+  function addRung(cls,tag,px,top){
+    const r=document.createElement('div'); r.className='rung '+cls; r.style.top=top+'px';
+    r.innerHTML='<span class="tag">'+tag+'</span><span class="line"></span><span class="px">$'+px.toFixed(2)+'</span>';
+    el.appendChild(r);
+  }
+}
+
+// ── 야후 OHLC (멀티 프록시 + 미확정봉 제외) ──
+async function fetchOHLC(){
+  const target='https://query1.finance.yahoo.com/v8/finance/chart/SOXL?interval=1d&range=1mo';
+  const proxies=[
+    u=>'https://corsproxy.io/?'+encodeURIComponent(u),
+    u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+    u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u),
+  ];
+  const tryOne=async pf=>{
+    const res=await fetch(pf(target),{signal:AbortSignal.timeout(12000)});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    const r=data.chart.result[0], q=r.indicators.quote[0], ts=r.timestamp;
+    const bars=[];
+    for(let i=0;i<ts.length;i++){
+      if(q.close[i]!=null&&q.high[i]!=null&&q.low[i]!=null){
+        const dt=new Date(ts[i]*1000);
+        bars.push({date:`${dt.getUTCFullYear()}-${pad(dt.getUTCMonth()+1)}-${pad(dt.getUTCDate())}`,
+                   o:q.open[i],h:q.high[i],l:q.low[i],c:q.close[i]});
+      }
+    }
+    if(!bars.length) throw new Error('빈 데이터');
+    return bars;
+  };
+  return await Promise.any(proxies.map(tryOne));
+}
+
+async function loadYahoo(){
+  const btn=$('fetchBtn'); btn.disabled=true; btn.textContent='받는 중...';
+  btn.className='fetchbtn';
+  try{
+    const bars=await fetchOHLC();
+    // 미확정 오늘봉(ET 16:05 이전) 분리
+    const nowET=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+    const etToday=`${nowET.getFullYear()}-${pad(nowET.getMonth()+1)}-${pad(nowET.getDate())}`;
+    const closed = nowET.getHours()>16 || (nowET.getHours()===16&&nowET.getMinutes()>=5);
+    livePrice=null;
+    if(!closed && bars.length && bars[bars.length-1].date===etToday){
+      livePrice = Math.round(bars.pop().c*100)/100;   // 오늘 진행중 = 현재가
+    }
+    const base=bars[bars.length-1];   // 마지막 확정봉
+    $('hi').value=base.h.toFixed(2);
+    $('lo').value=base.l.toFixed(2);
+    $('cl').value=base.c.toFixed(2);
+    $('baseDate').value=base.date+'  (종가 $'+base.c.toFixed(2)+')';
+
+    $('livePx').textContent = livePrice!=null ? '$'+livePrice.toFixed(2) : '$'+base.c.toFixed(2);
+    $('liveMeta').innerHTML = livePrice!=null
+      ? `현재가 (장중) · 기준일 <b>${base.date}</b>`
+      : `기준일 <b>${base.date}</b> 종가 · 다음 거래일 트리거 계산됨`;
+
+    btn.className='fetchbtn ok'; btn.textContent='✓ 받음';
+    setTimeout(()=>{btn.className='fetchbtn';btn.textContent='🌐 야후 종가 받기';btn.disabled=false;},1600);
+    calc();
+  }catch(e){
+    btn.className='fetchbtn err'; btn.textContent='✗ 실패';
+    $('liveMeta').textContent='실패: '+e.message+' — 직접 H/L/C 입력 가능';
+    setTimeout(()=>{btn.className='fetchbtn';btn.textContent='🌐 야후 종가 받기';btn.disabled=false;},2200);
+  }
+}
+
+// 초기 레벨 버튼 동기화
+document.querySelectorAll('#levelPick button').forEach(b=>
+  b.classList.toggle('active', +b.dataset.lv===level));
+calc();
+</script>
+</body>
+</html>
