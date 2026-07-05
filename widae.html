@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>위대리 시트 · TQQQ 주간</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  :root {
+    --bg:#0f0e0c; --surface:#1a1816; --surface-2:#252220; --surface-3:#2e2a26;
+    --border:#3a3632; --border-lite:#2b2825;
+    --text:#e8e3dc; --text-dim:#9a9188; --text-faint:#5c5550;
+    --accent:#d4a574; --accent-dark:#8b6d50;
+    --green:#7ca982; --red:#c47171; --yellow:#d4b974; --blue:#7a9ab8;
+  }
+  body { background:var(--bg); color:var(--text); font-family:'IBM Plex Sans KR',sans-serif;
+    line-height:1.6; min-height:100vh; font-feature-settings:"tnum" 1; }
+  .mono { font-family:'JetBrains Mono',monospace; }
+  .container { max-width:1080px; margin:0 auto; padding:16px 12px 60px; }
+  .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:8px; flex-wrap:wrap; }
+  .app-title { font-size:17px; font-weight:700; }
+  .app-title .accent { color:var(--accent); }
+  .login-btn { background:var(--surface); border:1px solid var(--border); color:var(--text-dim);
+    padding:5px 11px; border-radius:14px; font-family:inherit; font-size:11px; font-weight:500;
+    cursor:pointer; display:inline-flex; align-items:center; gap:5px; }
+  .login-btn:hover { border-color:var(--accent-dark); color:var(--text); }
+  .login-btn.logged-in { color:var(--green); border-color:rgba(124,169,130,0.5); }
+  .sync-indicator { width:6px; height:6px; border-radius:50%; background:var(--green); }
+  .sync-indicator.syncing { background:var(--yellow); animation:pu 1.2s infinite; }
+  .sync-indicator.error { background:var(--red); }
+  @keyframes pu { 0%,100%{opacity:1;} 50%{opacity:0.2;} }
+
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:14px; margin-bottom:10px; }
+  .panel-title { font-size:11px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase;
+    color:var(--accent); margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
+
+  /* Order card */
+  .order-card { background:linear-gradient(135deg,#1f1c19,#252220); border:1px solid var(--accent-dark);
+    border-radius:12px; padding:16px; margin-bottom:10px; }
+  .oc-top { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:6px; font-size:13px; font-weight:700; }
+  .z초고평 { background:rgba(196,113,113,0.25); color:#d88c8c; }
+  .z고평가 { background:rgba(224,149,105,0.25); color:#e9a984; }
+  .z중간가 { background:rgba(154,145,136,0.25); color:#b8aea4; }
+  .z저평가 { background:rgba(124,169,130,0.25); color:#94c19a; }
+  .z초저평 { background:rgba(74,139,118,0.3); color:#6abea0; }
+  .z초기매수 { background:rgba(212,165,116,0.25); color:var(--accent); }
+  .oc-action { display:flex; align-items:baseline; margin:12px 0 8px; padding:12px 0;
+    border-top:1px solid var(--border-lite); border-bottom:1px solid var(--border-lite); }
+  .oc-verb { font-size:20px; font-weight:700; }
+  .oc-verb.buy { color:var(--green); } .oc-verb.sell { color:var(--red); } .oc-verb.hold { color:var(--text-dim); }
+  .oc-qty { font-family:'JetBrains Mono',monospace; font-size:30px; font-weight:700; color:var(--accent); margin-left:auto; }
+  .oc-unit { font-size:13px; color:var(--text-dim); margin-left:4px; }
+  .oc-detail { display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:12px; }
+  .oc-detail .row { display:flex; justify-content:space-between; }
+  .oc-detail .k { color:var(--text-dim); }
+  .oc-detail .v { font-family:'JetBrains Mono',monospace; font-weight:500; }
+  .oc-detail .v.am { color:var(--accent); font-weight:600; }
+
+  /* Ledger table */
+  .tbl-wrap { overflow-x:auto; border:1px solid var(--border-lite); border-radius:8px; }
+  table.ledger { border-collapse:collapse; font-size:11px; font-family:'JetBrains Mono',monospace; width:100%; min-width:920px; }
+  .ledger th, .ledger td { padding:5px 7px; text-align:right; border-bottom:1px solid var(--border-lite); white-space:nowrap; }
+  .ledger th { color:var(--text-faint); font-size:10px; font-weight:500; position:sticky; top:0; background:var(--surface); }
+  .ledger td:first-child, .ledger th:first-child { text-align:left; }
+  .ledger tr:last-child td { background:rgba(212,165,116,0.06); }
+  .ledger input { background:var(--bg); border:1px solid var(--border); color:var(--text);
+    padding:3px 5px; border-radius:4px; font-family:inherit; font-size:11px; text-align:right; }
+  .ledger input.price { width:64px; }
+  .ledger input.fill { width:44px; }
+  .ledger input.dt { width:98px; text-align:left; }
+  .ledger input:focus { outline:none; border-color:var(--accent); }
+  .ledger input.overridden { border-color:var(--yellow); }
+  .ledger .buy { color:var(--green); } .ledger .sell { color:var(--red); } .ledger .hold { color:var(--text-faint); }
+  .zchip { display:inline-block; padding:0 5px; border-radius:4px; font-size:10px; }
+  .del-btn { background:none; border:none; color:var(--text-faint); cursor:pointer; font-size:12px; padding:0 4px; }
+  .del-btn:hover { color:var(--red); }
+
+  .btn { padding:12px; border:none; border-radius:10px; font-family:inherit; font-size:13px;
+    font-weight:700; cursor:pointer; margin-bottom:8px; }
+  .btn-primary { background:linear-gradient(135deg,#d4a574,#b88a5a); color:#1a1816; width:100%; }
+  .btn-primary:disabled { opacity:0.4; cursor:wait; }
+  .btn-ghost { background:var(--surface); color:var(--text-dim); border:1px solid var(--border); }
+  .btn-row { display:flex; gap:8px; }
+  .btn-row .btn { flex:1; margin-bottom:8px; }
+
+  .cfg-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+  .cfg-row { display:flex; justify-content:space-between; align-items:center; gap:8px;
+    background:var(--surface-2); border:1px solid var(--border-lite); padding:8px 11px; border-radius:8px; }
+  .cfg-row label { font-size:12px; color:var(--text-dim); }
+  .cfg-row input { background:var(--bg); border:1px solid var(--border); color:var(--text);
+    padding:4px 7px; border-radius:5px; font-family:'JetBrains Mono',monospace; font-size:12px;
+    width:76px; text-align:right; }
+  .rate-table { width:100%; border-collapse:collapse; font-size:12px; font-family:'JetBrains Mono',monospace; margin-top:8px; }
+  .rate-table th, .rate-table td { padding:4px 8px; text-align:center; border-bottom:1px solid var(--border-lite); }
+  .rate-table th { color:var(--text-faint); font-size:10px; }
+  .rate-table td:first-child { text-align:left; }
+  .rate-table input { background:var(--bg); border:1px solid var(--border); color:var(--text);
+    padding:3px 5px; border-radius:4px; font-family:inherit; font-size:11px; width:54px; text-align:right; }
+
+  .collapsible-trigger { background:var(--surface); border:1px solid var(--border); color:var(--text-dim);
+    padding:10px 14px; border-radius:8px; font-family:inherit; font-size:12px; font-weight:500;
+    cursor:pointer; width:100%; text-align:left; margin-bottom:8px;
+    display:flex; justify-content:space-between; }
+  .collapsible-content { display:none; }
+  .collapsible-content.open { display:block; }
+  .footer { margin-top:20px; padding:12px 0; text-align:center; font-size:10px; color:var(--text-faint);
+    border-top:1px solid var(--border-lite); }
+  .footer a { color:var(--accent); text-decoration:none; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(100px);
+    background:var(--surface); border:1px solid var(--accent); color:var(--text); padding:10px 18px;
+    border-radius:8px; font-size:13px; opacity:0; transition:all 0.3s; z-index:100; }
+  .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+  .toast.error { border-color:var(--red); }
+  .toast.success { border-color:var(--green); }
+  .stat-strip { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .stat { flex:1; min-width:110px; background:var(--surface-2); border:1px solid var(--border-lite);
+    border-radius:8px; padding:8px 10px; }
+  .stat .k { font-size:10px; color:var(--text-faint); text-transform:uppercase; }
+  .stat .v { font-family:'JetBrains Mono',monospace; font-size:15px; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="top-bar">
+    <div class="app-title"><span class="accent">위대리</span> 시트 (원장식)</div>
+    <button class="login-btn" id="loginBtn"><span id="loginBtnIcon">&#128272;</span><span id="loginBtnLabel">로그인</span></button>
+  </div>
+
+  <!-- 이번 주 주문 -->
+  <div class="order-card" id="orderCard" style="display:none;">
+    <div class="oc-top">
+      <span class="badge" id="ocZone">-</span>
+      <span class="mono" style="font-size:12px;color:var(--text-dim);" id="ocDev">-</span>
+      <span class="mono" style="font-size:12px;color:var(--text-faint);margin-left:auto;" id="ocDate">-</span>
+    </div>
+    <div class="oc-action">
+      <span class="oc-verb hold" id="ocVerb">홀드</span>
+      <span class="oc-qty" id="ocQty">0</span><span class="oc-unit">주</span>
+    </div>
+    <div class="oc-detail">
+      <div class="row"><span class="k">평가금 변동</span><span class="v" id="ocDelta">-</span></div>
+      <div class="row"><span class="k">매매 예정금</span><span class="v am" id="ocPlanned">-</span></div>
+      <div class="row"><span class="k">체결가</span><span class="v" id="ocPrice">-</span></div>
+      <div class="row"><span class="k">추세</span><span class="v" id="ocTrend">-</span></div>
+      <div class="row"><span class="k">거래 후 보유</span><span class="v" id="ocShares">-</span></div>
+      <div class="row"><span class="k">거래 후 예수금</span><span class="v" id="ocCash">-</span></div>
+    </div>
+  </div>
+
+  <div class="stat-strip">
+    <div class="stat"><div class="k">보유</div><div class="v" id="stShares">-</div></div>
+    <div class="stat"><div class="k">예수금</div><div class="v" id="stCash">-</div></div>
+    <div class="stat"><div class="k">총자산</div><div class="v" id="stTotal">-</div></div>
+    <div class="stat"><div class="k">수익률</div><div class="v" id="stRet">-</div></div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary" id="addWeekBtn">+ 다음 주 추가 (야후 자동)</button>
+  </div>
+
+  <!-- 원장 테이블 -->
+  <div class="panel">
+    <div class="panel-title"><span>주간 원장 — 셀 수정 시 전체 재계산</span><span style="text-transform:none;color:var(--text-faint);font-weight:400;">체결칸 노란 테두리 = 계획과 다름</span></div>
+    <div class="tbl-wrap">
+      <table class="ledger" id="ledgerTable"></table>
+    </div>
+  </div>
+
+  <!-- 설정 -->
+  <button class="collapsible-trigger" id="cfgTrigger"><span>⚙️ 전략 설정 (시드/구간/비율)</span><span>▶</span></button>
+  <div class="collapsible-content" id="cfgContent">
+    <div class="panel">
+      <div class="cfg-grid">
+        <div class="cfg-row"><label>시드 ($)</label><input type="number" id="cfgSeed" step="1"></div>
+        <div class="cfg-row"><label>예수금 보정 ($)</label><input type="number" id="cfgCashAdj" step="1"></div>
+        <div class="cfg-row"><label>최소 주식비중 (%)</label><input type="number" id="cfgMinPct" step="1"></div>
+        <div class="cfg-row"><label>초기 투입 (%)</label><input type="number" id="cfgInitPct" step="5"></div>
+      </div>
+      <table class="rate-table">
+        <thead><tr><th>구간</th><th>편차</th><th>매도율%</th><th>매수율%</th></tr></thead>
+        <tbody>
+          <tr><td>초고평</td><td>&gt;<input id="cfgB1" style="width:48px"></td><td><input id="rsxh"></td><td><input id="rbxh"></td></tr>
+          <tr><td>고평가</td><td>&gt;<input id="cfgB2" style="width:48px"></td><td><input id="rsh"></td><td><input id="rbh"></td></tr>
+          <tr><td>중간가</td><td>&ge;<input id="cfgB3" style="width:48px"></td><td><input id="rsm"></td><td><input id="rbm"></td></tr>
+          <tr><td>저평가</td><td>&ge;<input id="cfgB4" style="width:48px"></td><td><input id="rsl"></td><td><input id="rbl"></td></tr>
+          <tr><td>초저평</td><td>그 외</td><td><input id="rsxl"></td><td><input id="rbxl"></td></tr>
+        </tbody>
+      </table>
+      <div style="display:flex;gap:6px;margin-top:10px;">
+        <button class="btn btn-ghost" id="saveCfgBtn" style="flex:1;">설정 저장</button>
+        <button class="btn btn-ghost" id="resetBtn" style="color:var(--red);border-color:rgba(196,113,113,0.4);">⚠ 초기화</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    위대리(5구간)+[10%] 시트 이식 · 매주 종가 입력 → 시트와 동일한 전체 재계산<br>
+    <a href="https://docs.google.com/spreadsheets/d/1gjUIPOmGcjLvhIXstIU8O0coW9OXqMDbgObn21qLw_8" target="_blank">원본 시트 (NATAS v6.0)</a>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script>
+  let firebaseAuth = null, firebaseDb = null, firebaseUser = null, firebaseEnabled = false;
+  try {
+    firebase.initializeApp({
+      apiKey: "AIzaSyDSNC1cd9pmyW7re_ANjxMLTHxlgUaWkrk",
+      authDomain: "dongpa-sync.firebaseapp.com",
+      projectId: "dongpa-sync",
+      storageBucket: "dongpa-sync.firebasestorage.app",
+      messagingSenderId: "1078335466166",
+      appId: "1:1078335466166:web:56c77ce8d5103ae4d25417"
+    });
+    firebaseAuth = firebase.auth();
+    firebaseDb = firebase.firestore();
+    firebaseEnabled = true;
+  } catch(e) { console.warn('[FB]', e.message); }
+</script>
+
+<script>
+// ============================================================
+//  QQQ 추세 데이터 (843주 임베드)
+// ============================================================
+const QQQ_HISTORY = [["2010-02-12",43.76],["2010-02-19",44.83],["2010-02-26",44.76],["2010-03-05",46.44],["2010-03-12",47.36],["2010-03-19",47.49],["2010-03-26",48.0],["2010-04-01",48.16],["2010-04-09",49.03],["2010-04-16",49.53],["2010-04-23",50.52],["2010-04-30",49.24],["2010-05-07",45.41],["2010-05-14",46.93],["2010-05-21",44.84],["2010-06-04",45.09],["2010-06-11",45.5],["2010-06-18",47.0],["2010-06-25",45.27],["2010-07-02",42.47],["2010-07-16",44.34],["2010-07-23",46.06],["2010-07-30",45.81],["2010-08-06",46.76],["2010-08-13",44.72],["2010-08-27",44.07],["2010-09-10",46.6],["2010-09-17",48.0],["2010-09-24",49.66],["2010-10-01",49.01],["2010-10-08",49.75],["2010-10-15",51.49],["2010-10-22",51.64],["2010-10-29",52.18],["2010-11-05",53.67],["2010-11-12",52.51],["2010-11-19",52.47],["2010-11-26",52.77],["2010-12-03",53.87],["2010-12-10",54.5],["2010-12-17",54.52],["2010-12-23",54.74],["2010-12-31",54.46],["2011-01-07",55.87],["2011-01-14",57.0],["2011-01-21",55.68],["2011-01-28",55.73],["2011-02-04",57.38],["2011-02-11",58.44],["2011-02-18",58.73],["2011-02-25",57.65],["2011-03-04",57.97],["2011-03-11",56.49],["2011-03-18",54.45],["2011-03-25",56.84],["2011-04-01",57.46],["2011-04-08",56.95],["2011-04-15",56.65],["2011-04-21",58.34],["2011-04-29",59.08],["2011-05-06",58.47],["2011-05-13",58.41],["2011-05-20",57.77],["2011-05-27",57.43],["2011-06-03",56.35],["2011-06-10",54.64],["2011-06-17",53.79],["2011-06-24",54.38],["2011-07-01",57.91],["2011-07-08",59.03],["2011-07-15",57.85],["2011-07-22",59.6],["2011-07-29",58.0],["2011-08-05",53.83],["2011-08-12",53.57],["2011-08-19",50.03],["2011-08-26",53.13],["2011-09-02",53.28],["2011-09-09",53.18],["2011-09-16",56.59],["2011-09-23",54.15],["2011-09-30",52.49],["2011-10-07",54.07],["2011-10-14",58.18],["2011-10-21",57.3],["2011-10-28",58.94],["2011-11-04",57.8],["2011-11-11",57.85],["2011-11-18",55.4],["2011-11-25",52.88],["2011-12-02",56.62],["2011-12-09",57.02],["2011-12-16",54.86],["2011-12-23",56.08],["2011-12-30",55.83],["2012-01-06",57.81],["2012-01-13",58.18],["2012-01-20",59.77],["2012-01-27",60.4],["2012-02-03",62.05],["2012-02-10",62.47],["2012-02-17",63.43],["2012-02-24",63.96],["2012-03-02",64.87],["2012-03-09",65.02],["2012-03-16",66.52],["2012-03-23",66.94],["2012-03-30",67.55],["2012-04-05",67.72],["2012-04-13",66.19],["2012-04-20",65.68],["2012-04-27",67.24],["2012-05-04",64.7],["2012-05-11",64.18],["2012-05-18",60.81],["2012-05-25",62.07],["2012-06-01",60.41],["2012-06-08",62.87],["2012-06-15",62.99],["2012-06-22",63.35],["2012-06-29",64.16],["2012-07-06",64.12],["2012-07-13",63.38],["2012-07-20",64.24],["2012-07-27",64.87],["2012-08-03",65.6],["2012-08-10",66.86],["2012-08-17",68.32],["2012-08-24",68.29],["2012-08-31",68.16],["2012-09-07",69.43],["2012-09-14",70.18],["2012-09-21",70.15],["2012-09-28",68.57],["2012-10-05",68.98],["2012-10-12",66.68],["2012-10-19",65.68],["2012-10-26",65.35],["2012-11-02",65.17],["2012-11-09",63.43],["2012-11-16",62.3],["2012-11-23",64.9],["2012-11-30",65.8],["2012-12-07",64.93],["2012-12-14",64.69],["2012-12-21",65.2],["2012-12-28",63.78],["2013-01-04",66.63],["2013-01-11",67.26],["2013-01-18",67.07],["2013-01-25",67.0],["2013-02-01",67.66],["2013-02-08",67.99],["2013-02-15",67.75],["2013-02-22",67.14],["2013-03-01",67.38],["2013-03-08",68.77],["2013-03-15",68.51],["2013-03-22",68.59],["2013-03-28",68.97],["2013-04-05",67.86],["2013-04-12",69.94],["2013-04-19",68.09],["2013-04-26",69.57],["2013-05-03",72.12],["2013-05-10",73.05],["2013-05-17",74.3],["2013-05-24",73.41],["2013-05-31",73.25],["2013-06-07",73.39],["2013-06-14",72.28],["2013-06-21",70.43],["2013-06-28",71.27],["2013-07-05",72.58],["2013-07-12",75.3],["2013-07-19",74.59],["2013-07-26",75.37],["2013-08-02",76.97],["2013-08-09",76.49],["2013-08-16",75.49],["2013-08-23",76.67],["2013-08-30",75.47],["2013-09-06",76.93],["2013-09-13",78.06],["2013-09-20",78.99],["2013-09-27",79.07],["2013-10-04",79.4],["2013-10-11",79.23],["2013-10-18",82.15],["2013-10-25",82.9],["2013-11-01",82.81],["2013-11-08",82.54],["2013-11-15",83.96],["2013-11-22",83.99],["2013-11-29",85.73],["2013-12-06",86.0],["2013-12-13",84.85],["2013-12-20",86.5],["2013-12-27",87.52],["2014-01-03",86.64],["2014-01-10",87.3],["2014-01-17",87.88],["2014-01-24",86.74],["2014-01-31",86.27],["2014-02-07",87.3],["2014-02-14",89.81],["2014-02-21",89.93],["2014-02-28",90.34],["2014-03-07",90.53],["2014-03-14",88.67],["2014-03-21",89.0],["2014-03-28",87.05],["2014-04-04",86.37],["2014-04-11",84.11],["2014-04-17",86.2],["2014-04-25",86.19],["2014-05-02",87.49],["2014-05-09",86.8],["2014-05-16",87.71],["2014-05-23",89.88],["2014-05-30",91.31],["2014-06-06",92.82],["2014-06-13",92.32],["2014-06-20",92.77],["2014-06-27",93.75],["2014-07-03",95.7],["2014-07-11",95.27],["2014-07-18",96.12],["2014-07-25",96.74],["2014-08-01",94.67],["2014-08-08",94.9],["2014-08-15",97.4],["2014-08-22",99.05],["2014-08-29",99.78],["2014-09-05",99.89],["2014-09-12",99.48],["2014-09-19",99.98],["2014-09-26",98.78],["2014-10-03",98.17],["2014-10-10",94.44],["2014-10-17",93.0],["2014-10-24",98.62],["2014-10-31",101.4],["2014-11-07",101.6],["2014-11-14",103.22],["2014-11-21",103.87],["2014-11-28",106.01],["2014-12-05",105.38],["2014-12-12",102.67],["2014-12-19",104.32],["2014-12-26",105.04],["2015-01-02",102.94],["2015-01-09",102.62],["2015-01-16",100.82],["2015-01-23",104.26],["2015-01-30",101.1],["2015-02-06",103.13],["2015-02-13",106.91],["2015-02-20",108.41],["2015-02-27",108.4],["2015-03-06",107.41],["2015-03-13",105.34],["2015-03-20",108.53],["2015-03-27",105.52],["2015-04-02",105.12],["2015-04-10",107.75],["2015-04-17",106.01],["2015-04-24",110.54],["2015-05-01",109.05],["2015-05-08",108.69],["2015-05-15",109.58],["2015-05-22",110.47],["2015-05-29",110.05],["2015-06-05",109.3],["2015-06-12",108.75],["2015-06-19",109.89],["2015-06-26",109.27],["2015-07-02",107.95],["2015-07-10",107.65],["2015-07-17",113.59],["2015-07-24",111.1],["2015-07-31",111.95],["2015-08-07",110.31],["2015-08-14",110.51],["2015-08-21",102.4],["2015-08-28",105.62],["2015-09-04",102.16],["2015-09-11",105.57],["2015-09-18",105.35],["2015-09-25",102.92],["2015-10-02",104.01],["2015-10-09",106.53],["2015-10-16",108.12],["2015-10-23",112.78],["2015-10-30",113.33],["2015-11-06",114.79],["2015-11-13",109.84],["2015-11-20",114.48],["2015-11-27",114.31],["2015-12-04",115.14],["2015-12-11",110.79],["2015-12-18",109.83],["2015-12-24",112.59],["2015-12-31",111.86],["2016-01-08",104.01],["2016-01-15",100.84],["2016-01-22",103.77],["2016-01-29",104.13],["2016-02-05",98.12],["2016-02-12",98.02],["2016-02-19",101.63],["2016-02-26",103.43],["2016-03-04",105.67],["2016-03-11",106.49],["2016-03-18",107.37],["2016-03-24",107.26],["2016-04-01",110.36],["2016-04-08",109.0],["2016-04-15",110.64],["2016-04-22",108.98],["2016-04-29",105.72],["2016-05-06",105.58],["2016-05-13",105.5],["2016-05-20",106.47],["2016-05-27",110.13],["2016-06-03",110.06],["2016-06-10",108.94],["2016-06-17",106.49],["2016-06-24",104.29],["2016-07-01",108.08],["2016-07-08",110.3],["2016-07-15",111.8],["2016-07-22",113.65],["2016-07-29",115.23],["2016-08-05",116.78],["2016-08-12",117.2],["2016-08-19",117.26],["2016-08-26",116.78],["2016-09-02",117.12],["2016-09-09",114.28],["2016-09-16",117.29],["2016-09-23",118.33],["2016-09-30",118.72],["2016-10-07",118.47],["2016-10-14",117.14],["2016-10-21",118.15],["2016-10-28",117.1],["2016-11-04",113.65],["2016-11-11",115.8],["2016-11-18",117.32],["2016-11-25",118.8],["2016-12-02",115.7],["2016-12-09",119.5],["2016-12-16",119.6],["2016-12-23",120.2],["2016-12-30",118.48],["2017-01-06",121.93],["2017-01-13",123.16],["2017-01-20",123.25],["2017-01-27",125.8],["2017-02-03",125.68],["2017-02-10",127.38],["2017-02-17",129.81],["2017-02-24",130.26],["2017-03-03",131.02],["2017-03-10",131.39],["2017-03-17",131.69],["2017-03-24",130.63],["2017-03-31",132.38],["2017-04-07",131.97],["2017-04-13",130.4],["2017-04-21",132.56],["2017-04-28",135.99],["2017-05-05",137.54],["2017-05-12",138.6],["2017-05-19",137.84],["2017-05-26",141.22],["2017-06-02",143.46],["2017-06-09",139.98],["2017-06-16",138.15],["2017-06-23",141.24],["2017-06-30",137.64],["2017-07-07",137.76],["2017-07-14",142.12],["2017-07-21",144.11],["2017-07-28",143.84],["2017-08-04",143.65],["2017-08-11",142.1],["2017-08-18",141.23],["2017-08-25",141.97],["2017-09-01",146.0],["2017-09-08",144.21],["2017-09-15",146.06],["2017-09-22",144.32],["2017-09-29",145.45],["2017-10-06",147.66],["2017-10-13",148.34],["2017-10-20",148.71],["2017-10-27",151.24],["2017-11-03",153.27],["2017-11-10",153.68],["2017-11-17",153.95],["2017-11-24",156.26],["2017-12-01",154.49],["2017-12-08",154.7],["2017-12-15",157.65],["2017-12-22",157.37],["2017-12-29",155.76],["2018-01-05",161.92],["2018-01-12",164.49],["2018-01-19",166.34],["2018-01-26",170.93],["2018-02-02",164.61],["2018-02-09",156.1],["2018-02-16",164.96],["2018-02-23",168.17],["2018-03-02",165.99],["2018-03-09",173.16],["2018-03-16",171.02],["2018-03-23",158.51],["2018-03-29",160.13],["2018-04-06",156.63],["2018-04-13",161.37],["2018-04-20",162.3],["2018-04-27",162.09],["2018-05-04",164.87],["2018-05-11",169.46],["2018-05-18",167.46],["2018-05-25",169.72],["2018-06-01",172.74],["2018-06-08",174.44],["2018-06-15",176.98],["2018-06-22",175.32],["2018-06-29",171.65],["2018-07-06",175.61],["2018-07-13",179.61],["2018-07-20",178.99],["2018-07-27",177.62],["2018-08-03",180.08],["2018-08-10",180.52],["2018-08-17",179.86],["2018-08-24",182.48],["2018-08-31",186.65],["2018-09-07",181.11],["2018-09-14",183.99],["2018-09-21",183.71],["2018-09-28",185.79],["2018-10-05",180.15],["2018-10-12",174.32],["2018-10-19",173.02],["2018-10-26",166.66],["2018-11-02",169.38],["2018-11-09",171.52],["2018-11-16",167.5],["2018-11-23",159.21],["2018-11-30",169.37],["2018-12-07",161.38],["2018-12-14",161.08],["2018-12-21",147.57],["2018-12-28",152.97],["2019-01-04",156.23],["2019-01-11",160.69],["2019-01-18",165.25],["2019-01-25",165.15],["2019-02-01",167.45],["2019-02-08",168.56],["2019-02-15",171.94],["2019-02-22",172.89],["2019-03-01",174.39],["2019-03-08",171.17],["2019-03-15",178.35],["2019-03-22",178.56],["2019-03-29",179.66],["2019-04-05",184.66],["2019-04-12",185.83],["2019-04-18",187.39],["2019-04-26",190.65],["2019-05-03",191.11],["2019-05-10",185.0],["2019-05-17",183.04],["2019-05-24",178.16],["2019-05-31",173.95],["2019-06-07",181.04],["2019-06-14",182.64],["2019-06-21",188.57],["2019-06-28",186.74],["2019-07-05",191.05],["2019-07-12",193.53],["2019-07-19",191.01],["2019-07-26",195.29],["2019-08-02",187.35],["2019-08-09",186.49],["2019-08-16",185.48],["2019-08-23",182.07],["2019-08-30",187.47],["2019-09-06",191.59],["2019-09-13",192.54],["2019-09-20",190.8],["2019-09-27",187.03],["2019-10-04",188.81],["2019-10-11",191.11],["2019-10-18",191.69],["2019-10-25",195.64],["2019-11-01",198.87],["2019-11-08",201.23],["2019-11-15",202.91],["2019-11-22",201.83],["2019-11-29",205.1],["2019-12-06",205.0],["2019-12-13",207.19],["2019-12-20",211.71],["2019-12-27",213.61],["2020-01-03",214.18],["2020-01-10",218.43],["2020-01-17",223.38],["2020-01-24",222.7],["2020-01-31",219.07],["2020-02-07",229.2],["2020-02-14",234.64],["2020-02-21",230.27],["2020-02-28",205.8],["2020-03-06",208.02],["2020-03-13",192.34],["2020-03-20",170.7],["2020-03-27",185.3],["2020-04-03",183.37],["2020-04-09",200.86],["2020-04-17",215.29],["2020-04-24",213.84],["2020-05-01",212.74],["2020-05-08",224.86],["2020-05-15",223.27],["2020-05-22",229.66],["2020-05-29",233.36],["2020-06-05",239.69],["2020-06-12",235.88],["2020-06-19",244.24],["2020-06-26",240.22],["2020-07-02",252.19],["2020-07-10",263.97],["2020-07-17",259.42],["2020-07-24",255.56],["2020-07-31",265.79],["2020-08-07",271.47],["2020-08-14",272.16],["2020-08-21",281.87],["2020-08-28",292.53],["2020-09-04",283.58],["2020-09-11",270.45],["2020-09-18",266.87],["2020-09-25",271.56],["2020-10-02",274.31],["2020-10-09",285.71],["2020-10-16",288.51],["2020-10-23",284.74],["2020-10-30",269.38],["2020-11-06",294.61],["2020-11-13",290.93],["2020-11-20",290.38],["2020-11-27",299.01],["2020-12-04",305.52],["2020-12-11",301.85],["2020-12-18",310.06],["2020-12-24",309.56],["2020-12-31",313.74],["2021-01-08",319.03],["2021-01-15",311.86],["2021-01-22",325.42],["2021-01-29",314.56],["2021-02-05",331.36],["2021-02-12",336.45],["2021-02-19",331.02],["2021-02-26",314.14],["2021-03-05",308.68],["2021-03-12",315.46],["2021-03-19",313.14],["2021-03-26",316.0],["2021-04-01",324.57],["2021-04-09",337.11],["2021-04-16",342.01],["2021-04-23",339.42],["2021-04-30",337.99],["2021-05-07",334.2],["2021-05-14",326.39],["2021-05-21",327.01],["2021-05-28",333.93],["2021-06-04",335.6],["2021-06-11",341.24],["2021-06-18",342.63],["2021-06-25",349.46],["2021-07-02",358.64],["2021-07-09",361.01],["2021-07-16",357.6],["2021-07-23",368.2],["2021-07-30",364.57],["2021-08-06",368.05],["2021-08-13",368.82],["2021-08-20",367.73],["2021-08-27",376.04],["2021-09-03",381.57],["2021-09-10",376.59],["2021-09-17",373.83],["2021-09-24",373.33],["2021-10-01",360.18],["2021-10-08",361.16],["2021-10-15",368.94],["2021-10-22",374.1],["2021-10-29",386.11],["2021-11-05",398.6],["2021-11-12",394.7],["2021-11-19",403.99],["2021-11-26",391.2],["2021-12-03",383.13],["2021-12-10",398.01],["2021-12-17",384.91],["2021-12-23",396.92],["2021-12-31",397.85],["2022-01-07",379.86],["2022-01-14",380.01],["2022-01-21",351.69],["2022-01-28",351.8],["2022-02-04",358.01],["2022-02-11",347.06],["2022-02-18",341.51],["2022-02-25",345.77],["2022-03-04",337.3],["2022-03-11",324.4],["2022-03-18",351.49],["2022-03-25",359.35],["2022-04-01",361.85],["2022-04-08",349.15],["2022-04-14",338.43],["2022-04-22",325.4],["2022-04-29",313.25],["2022-05-06",309.25],["2022-05-13",301.94],["2022-05-20",288.68],["2022-05-27",309.1],["2022-06-03",306.2],["2022-06-10",288.84],["2022-06-17",274.69],["2022-06-24",294.61],["2022-07-01",282.13],["2022-07-08",295.35],["2022-07-15",291.87],["2022-07-22",301.99],["2022-07-29",315.46],["2022-08-05",321.75],["2022-08-12",330.39],["2022-08-19",322.86],["2022-08-26",307.44],["2022-09-02",295.17],["2022-09-09",307.09],["2022-09-16",289.32],["2022-09-23",275.51],["2022-09-30",267.26],["2022-10-07",269.1],["2022-10-14",260.74],["2022-10-21",275.42],["2022-10-28",281.22],["2022-11-04",264.68],["2022-11-11",287.96],["2022-11-18",284.82],["2022-11-25",286.92],["2022-12-02",292.55],["2022-12-09",282.04],["2022-12-16",274.25],["2022-12-23",267.36],["2022-12-30",266.28],["2023-01-06",268.8],["2023-01-13",280.97],["2023-01-20",282.68],["2023-01-27",296.26],["2023-02-03",306.18],["2023-02-10",299.7],["2023-02-17",301.16],["2023-02-24",291.85],["2023-03-03",299.68],["2023-03-10",288.55],["2023-03-17",305.36],["2023-03-24",310.89],["2023-03-31",320.93],["2023-04-06",318.05],["2023-04-14",318.57],["2023-04-21",316.61],["2023-04-28",322.56],["2023-05-05",322.89],["2023-05-12",325.03],["2023-05-19",336.51],["2023-05-26",348.4],["2023-06-02",354.65],["2023-06-09",354.5],["2023-06-16",367.93],["2023-06-23",362.54],["2023-06-30",369.42],["2023-07-07",366.24],["2023-07-14",379.07],["2023-07-21",375.63],["2023-07-28",383.48],["2023-08-04",372.04],["2023-08-11",366.24],["2023-08-18",358.13],["2023-08-25",364.02],["2023-09-01",377.59],["2023-09-08",372.58],["2023-09-15",370.81],["2023-09-22",357.91],["2023-09-29",358.27],["2023-10-06",364.7],["2023-10-13",365.28],["2023-10-20",354.6],["2023-10-27",345.31],["2023-11-03",367.71],["2023-11-10",378.39],["2023-11-17",386.04],["2023-11-24",389.51],["2023-12-01",389.94],["2023-12-08",392.17],["2023-12-15",405.34],["2023-12-22",408.38],["2023-12-29",409.52],["2024-01-05",396.75],["2024-01-12",409.56],["2024-01-19",421.18],["2024-01-26",423.81],["2024-02-02",429.01],["2024-02-09",437.05],["2024-02-16",430.57],["2024-02-23",436.78],["2024-03-01",445.61],["2024-03-08",439.02],["2024-03-15",433.92],["2024-03-22",446.38],["2024-03-28",444.01],["2024-04-05",440.47],["2024-04-12",438.27],["2024-04-19",414.65],["2024-04-26",431.0],["2024-05-03",435.48],["2024-05-10",442.06],["2024-05-17",451.76],["2024-05-24",457.95],["2024-05-31",450.71],["2024-06-07",462.96],["2024-06-14",479.19],["2024-06-21",480.18],["2024-06-28",479.11],["2024-07-05",496.16],["2024-07-12",494.82],["2024-07-19",475.24],["2024-07-26",462.97],["2024-08-02",448.75],["2024-08-09",450.41],["2024-08-16",475.03],["2024-08-23",480.0],["2024-08-30",476.27],["2024-09-06",448.69],["2024-09-13",475.34],["2024-09-20",482.44],["2024-09-27",486.75],["2024-10-04",487.32],["2024-10-11",493.36],["2024-10-18",494.47],["2024-10-25",495.32],["2024-11-01",487.43],["2024-11-08",514.14],["2024-11-15",496.57],["2024-11-22",505.79],["2024-11-29",509.74],["2024-12-06",526.48],["2024-12-13",530.53],["2024-12-20",518.66],["2024-12-27",522.56],["2025-01-03",518.58],["2025-01-10",507.19],["2025-01-17",521.74],["2025-01-24",529.63],["2025-01-31",522.29],["2025-02-07",522.92],["2025-02-14",538.15],["2025-02-21",526.08],["2025-02-28",508.17],["2025-03-07",491.79],["2025-03-14",479.66],["2025-03-21",480.84],["2025-03-28",468.94],["2025-04-04",422.67],["2025-04-11",454.4],["2025-04-17",444.1],["2025-04-25",472.56],["2025-05-02",488.83],["2025-05-09",487.97],["2025-05-16",521.51],["2025-05-23",509.24],["2025-05-30",519.11],["2025-06-06",529.92],["2025-06-13",526.96],["2025-06-20",526.83],["2025-06-27",548.09],["2025-07-03",556.22],["2025-07-11",554.2],["2025-07-18",561.26],["2025-07-25",566.37],["2025-08-01",553.88],["2025-08-08",574.55],["2025-08-15",577.34],["2025-08-22",571.97],["2025-08-29",570.4],["2025-09-05",576.06],["2025-09-12",586.66],["2025-09-19",599.35],["2025-09-26",595.97],["2025-10-03",603.18],["2025-10-10",589.5],["2025-10-17",603.93],["2025-10-24",617.1],["2025-10-31",629.07],["2025-11-07",609.74],["2025-11-14",608.86],["2025-11-21",590.07],["2025-11-28",619.25],["2025-12-05",625.48],["2025-12-12",613.62],["2025-12-19",617.05],["2025-12-26",623.89],["2026-01-02",613.12],["2026-01-09",626.65],["2026-01-16",621.26],["2026-01-23",622.72],["2026-01-30",621.87],["2026-02-06",609.65],["2026-02-13",601.92],["2026-02-20",608.81],["2026-02-27",607.29],["2026-03-06",599.75],["2026-03-13",593.72],["2026-03-20",582.06],["2026-03-27",562.58],["2026-04-02",584.98],["2026-04-10",611.07],["2026-04-17",648.85],["2026-04-24",663.88],["2026-05-01",674.15]];
+
+const STORAGE_KEY = 'widae_sheet_v1';
+
+// 기본 원장: 시트 실거래 그대로 (체결량 오버라이드 포함)
+function defaultLedger() {
+  return {
+    cfg: {
+      seed: 9331, cashAdj: 181, minPct: 10, initPct: 100,
+      bands: { b1: 9.5, b2: 6.0, b3: -10.0, b4: -12.5 },
+      rates: {
+        '초고평': { sell: 384, buy: 349 }, '고평가': { sell: 164, buy: 468 },
+        '중간가': { sell: 10, buy: 18 }, '저평가': { sell: 19, buy: 464 },
+        '초저평': { sell: 25, buy: 184 },
+      },
+    },
+    weeks: [
+      ['2025-12-19',53.52,617.05,null],
+      ['2025-12-26',55.31,623.89,166],
+      ['2026-01-02',52.35,613.12,6],
+      ['2026-01-09',55.76,626.65,17],
+      ['2026-01-16',54.14,621.26,17],
+      ['2026-01-23',54.38,622.72,1],
+      ['2026-01-30',54.00,621.87,0],
+      ['2026-02-06',50.59,609.65,1],
+      ['2026-02-13',48.47,601.92,0],
+      ['2026-02-20',50.06,608.81,0],
+      ['2026-02-27',49.52,607.29,0],
+      ['2026-03-06',47.54,599.75,1],
+      ['2026-03-13',45.93,593.72,0],
+      ['2026-03-20',43.08,582.06,0],
+      ['2026-03-27',38.78,562.58,0],
+      ['2026-04-02',43.33,584.98,1],
+      ['2026-04-10',49.17,611.07,2],
+      ['2026-04-17',58.59,648.85,44],
+      ['2026-04-24',62.56,663.88,13],
+      ['2026-05-01',65.30,674.15,18],
+      ['2026-05-08',76.28,711.23,52],
+      ['2026-05-15',75.34,708.93,1],
+      ['2026-05-22',77.84,717.54,5],
+      ['2026-05-29',84.56,738.31,11],
+      ['2026-06-05',73.05,705.06,14],
+    ],
+  };
+}
+
+function loadLedger() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultLedger();
+    const s = JSON.parse(raw);
+    if (!s.weeks || !s.cfg) return defaultLedger();
+    return s;
+  } catch(e) { return defaultLedger(); }
+}
+function saveLedger() { localStorage.setItem(STORAGE_KEY, JSON.stringify(L)); }
+let L = loadLedger();
+
+// ============================================================
+//  엔진: 전체 재계산 (시트 공식)
+// ============================================================
+function logRegress(prices) {
+  const n = prices.length;
+  if (n < 2) return prices[n-1];
+  let sx=0, sy=0, sxy=0, sx2=0;
+  for (let i=0;i<n;i++){ sx+=i; const y=Math.log(prices[i]); sy+=y; sxy+=i*y; sx2+=i*i; }
+  const m=(n*sxy-sx*sy)/(n*sx2-sx*sx), b=(sy-m*sx)/n;
+  return Math.exp(b+m*(n-1));
+}
+function classifyZone(d, b) {
+  if (d > b.b1/100) return '초고평';
+  if (d > b.b2/100) return '고평가';
+  if (d >= b.b3/100) return '중간가';
+  if (d >= b.b4/100) return '저평가';
+  return '초저평';
+}
+
+function computeAll() {
+  const cfg = L.cfg;
+  const rows = [];
+  let planned = null, prevT = null;
+  let shares = 0, cash = cfg.seed + (cfg.cashAdj||0), avg = 0;
+
+  const qm = new Map(QQQ_HISTORY);
+  for (const w of L.weeks) if (w[2]) qm.set(w[0], w[2]);
+  const ALL = [...qm.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+
+  for (let i = 0; i < L.weeks.length; i++) {
+    const [date, t, q, fill] = L.weeks[i];
+    const row = { i, date, t, q, fill };
+    if (!t || !date) { rows.push(row); continue; }
+    if (i === 0) {
+      prevT = t;
+      row.shares = shares; row.cash = cash; row.total = cash;
+      rows.push(row); continue;
+    }
+    if (!q) { rows.push(row); continue; }
+
+    const hist = ALL.filter(([d])=>d<date).map(([,p])=>p);
+    hist.push(q);
+    const trend = logRegress(hist);
+    const dev = (q - trend) / trend;
+    const zone = classifyZone(dev, cfg.bands);
+    const r = cfg.rates[zone];
+    row.trend = trend; row.dev = dev; row.zone = zone;
+
+    if (planned === null) {
+      const planShares = Math.floor(cfg.seed * (cfg.initPct/100) / t);
+      const exec = (fill != null) ? fill : planShares;
+      shares = exec; avg = t; cash -= exec * t;
+      planned = cfg.seed;
+      row.type = '초기매수'; row.planShares = planShares; row.exec = exec;
+      row.realAmt = exec * t;
+    } else {
+      const expected = planned * t / prevT;
+      const delta = expected - planned;
+      const total = cash + shares * t;
+      const minHold = Math.floor(total * (cfg.minPct/100) / t);
+      row.delta = delta; row.minHold = minHold;
+
+      let type = '홀드', realAmt = 0, planShares = 0, plannedAmt = 0;
+      if (delta > 0.005) {
+        type = '매도';
+        plannedAmt = delta * r.sell/100;
+        const maxAmt = Math.max(0, shares - minHold) * t;
+        realAmt = Math.min(plannedAmt, maxAmt);
+        planShares = Math.floor(realAmt / t);
+      } else if (delta < -0.005) {
+        type = '매수';
+        plannedAmt = Math.abs(delta) * r.buy/100;
+        realAmt = Math.min(plannedAmt, cash);
+        planShares = Math.floor(realAmt / t);
+      }
+      const exec = (fill != null) ? fill : planShares;
+      if (type === '매도' && exec > 0) { shares -= exec; cash += exec * t; }
+      else if (type === '매수' && exec > 0) {
+        const c = avg*shares + exec*t;
+        shares += exec; avg = c / shares; cash -= exec * t;
+      }
+      planned = expected + (type === '매수' ? realAmt : (type === '매도' ? -realAmt : 0));
+      row.type = type; row.planShares = planShares; row.exec = exec;
+      row.plannedAmt = plannedAmt; row.realAmt = realAmt;
+    }
+    prevT = t;
+    row.shares = shares; row.cash = cash; row.avg = avg;
+    row.total = cash + shares * t; row.planned = planned;
+    rows.push(row);
+  }
+  return rows;
+}
+
+// ============================================================
+//  렌더링
+// ============================================================
+const fmt$ = v => '$' + Math.round(v).toLocaleString();
+let computedRows = [];
+
+function render() {
+  computedRows = computeAll();
+  renderTable();
+  renderOrder();
+  renderStats();
+}
+
+function renderTable() {
+  const tbl = document.getElementById('ledgerTable');
+  let html = '<thead><tr><th>날짜</th><th>TQQQ</th><th>QQQ</th><th>구간</th><th>편차</th><th>변동</th><th>예정금</th><th>계획</th><th>체결</th><th>보유</th><th>예수금</th><th>자산</th><th></th></tr></thead><tbody>';
+  for (const r of computedRows) {
+    const isLast = r.i === L.weeks.length - 1;
+    const fillOverridden = (r.fill != null && r.planShares != null && r.fill !== r.planShares);
+    const typeCls = r.type === '매수' || r.type === '초기매수' ? 'buy' : (r.type === '매도' ? 'sell' : 'hold');
+    const planTxt = r.type && r.type !== '홀드' ? `${r.type==='초기매수'?'매수':r.type} ${r.planShares}` : (r.type === '홀드' ? '홀드' : '');
+    html += `<tr>
+      <td><input class="dt" data-i="${r.i}" data-f="date" value="${r.date||''}"></td>
+      <td><input class="price" data-i="${r.i}" data-f="t" value="${r.t!=null?r.t:''}" inputmode="decimal"></td>
+      <td><input class="price" data-i="${r.i}" data-f="q" value="${r.q!=null?r.q:''}" inputmode="decimal"></td>
+      <td>${r.zone?`<span class="zchip z${r.zone}">${r.zone}</span>`:''}</td>
+      <td>${r.dev!=null?(r.dev*100).toFixed(1)+'%':''}</td>
+      <td class="${r.delta>0?'sell':(r.delta<0?'buy':'')}">${r.delta!=null?Math.round(r.delta):''}</td>
+      <td>${r.plannedAmt!=null&&r.plannedAmt>0?Math.round(r.plannedAmt):''}</td>
+      <td class="${typeCls}">${planTxt}</td>
+      <td>${r.i>0&&r.type?`<input class="fill ${fillOverridden?'overridden':''}" data-i="${r.i}" data-f="fill" value="${r.exec!=null?r.exec:''}" inputmode="numeric">`:''}</td>
+      <td>${r.shares!=null?r.shares:''}</td>
+      <td>${r.cash!=null?Math.round(r.cash).toLocaleString():''}</td>
+      <td>${r.total!=null?Math.round(r.total).toLocaleString():''}</td>
+      <td>${isLast&&r.i>0?`<button class="del-btn" data-del="${r.i}">✕</button>`:''}</td>
+    </tr>`;
+  }
+  html += '</tbody>';
+  tbl.innerHTML = html;
+
+  tbl.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('change', onCellEdit);
+  });
+  tbl.querySelectorAll('[data-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('마지막 행을 삭제할까요?')) {
+        L.weeks.pop(); saveLedger(); render();
+      }
+    });
+  });
+  // 스크롤 맨 아래로
+  const wrap = tbl.closest('.tbl-wrap');
+  if (wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function onCellEdit(e) {
+  const i = parseInt(e.target.dataset.i);
+  const f = e.target.dataset.f;
+  const v = e.target.value.trim();
+  if (f === 'date') L.weeks[i][0] = v;
+  else if (f === 't') L.weeks[i][1] = v === '' ? null : parseFloat(v);
+  else if (f === 'q') L.weeks[i][2] = v === '' ? null : parseFloat(v);
+  else if (f === 'fill') L.weeks[i][3] = v === '' ? null : parseInt(v);
+  saveLedger();
+  render();
+}
+
+function renderOrder() {
+  const card = document.getElementById('orderCard');
+  const last = computedRows[computedRows.length - 1];
+  if (!last || !last.zone) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const zEl = document.getElementById('ocZone');
+  zEl.textContent = last.zone; zEl.className = 'badge z' + last.zone;
+  document.getElementById('ocDev').textContent = 'QQQ 편차 ' + (last.dev*100).toFixed(2) + '%';
+  document.getElementById('ocDate').textContent = last.date;
+  const verb = document.getElementById('ocVerb');
+  const t = last.type === '초기매수' ? '매수' : last.type;
+  verb.textContent = t || '홀드';
+  verb.className = 'oc-verb ' + (t === '매수' ? 'buy' : (t === '매도' ? 'sell' : 'hold'));
+  document.getElementById('ocQty').textContent = last.planShares != null ? last.planShares : 0;
+  document.getElementById('ocDelta').textContent = last.delta != null ?
+    (last.delta>=0?'+':'') + '$' + Math.round(last.delta).toLocaleString() : '-';
+  document.getElementById('ocPlanned').textContent = last.plannedAmt ? '$' + Math.round(last.plannedAmt).toLocaleString() : '-';
+  document.getElementById('ocPrice').textContent = '$' + last.t.toFixed(2);
+  document.getElementById('ocTrend').textContent = last.trend ? '$' + last.trend.toFixed(2) : '-';
+  document.getElementById('ocShares').textContent = last.shares + '주';
+  document.getElementById('ocCash').textContent = fmt$(last.cash);
+}
+
+function renderStats() {
+  const last = computedRows[computedRows.length - 1];
+  if (!last || last.total == null) return;
+  document.getElementById('stShares').textContent = last.shares + '주';
+  document.getElementById('stCash').textContent = fmt$(last.cash);
+  document.getElementById('stTotal').textContent = fmt$(last.total);
+  const ret = (last.total / L.cfg.seed - 1) * 100;
+  const el = document.getElementById('stRet');
+  el.textContent = (ret>=0?'+':'') + ret.toFixed(1) + '%';
+  el.style.color = ret >= 0 ? 'var(--green)' : 'var(--red)';
+}
+
+// ============================================================
+//  야후 자동 fetch + 다음 주 추가
+// ============================================================
+async function fetchYahoo(ticker, targetDate) {
+  const tgt = new Date(targetDate);
+  const s = new Date(tgt); s.setDate(tgt.getDate()-14);
+  const e = new Date(tgt); e.setDate(tgt.getDate()+1);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${Math.floor(s/1000)}&period2=${Math.floor(e/1000)}&interval=1d`;
+  const proxies = [
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  ];
+  let err;
+  for (const p of proxies) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 9000);
+      const res = await fetch(p(url), { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const j = await res.json();
+      const result = j?.chart?.result?.[0];
+      if (!result) throw new Error('no data');
+      const ts = result.timestamp || [];
+      const adj = result.indicators?.adjclose?.[0]?.adjclose || [];
+      const cls = result.indicators?.quote?.[0]?.close || [];
+      const prices = adj.length === ts.length ? adj : cls;
+      let best = null, bestD = null;
+      for (let i=0;i<ts.length;i++) {
+        const d = new Date(ts[i]*1000).toISOString().slice(0,10);
+        if (d <= targetDate && prices[i] != null) { best = prices[i]; bestD = d; }
+      }
+      if (best == null) throw new Error('no close');
+      return { price: best, date: bestD };
+    } catch(e2) { err = e2; }
+  }
+  throw err || new Error('all proxies failed');
+}
+
+async function addWeek() {
+  const btn = document.getElementById('addWeekBtn');
+  const lastDate = L.weeks.length ? L.weeks[L.weeks.length-1][0] : null;
+  let next;
+  if (lastDate) { next = new Date(lastDate); next.setDate(next.getDate()+7); }
+  else { next = new Date(); }
+  const nextStr = next.toISOString().slice(0,10);
+
+  btn.disabled = true; btn.textContent = '야후에서 가져오는 중...';
+  try {
+    const [t, q] = await Promise.all([fetchYahoo('TQQQ', nextStr), fetchYahoo('QQQ', nextStr)]);
+    const useDate = t.date;  // 비거래일이면 직전 거래일
+    if (L.weeks.some(w => w[0] === useDate)) {
+      showToast('이미 있는 날짜입니다: ' + useDate, 'error');
+    } else {
+      L.weeks.push([useDate, Math.round(t.price*100)/100, Math.round(q.price*100)/100, null]);
+      saveLedger(); render();
+      showToast('✅ ' + useDate + ' 추가됨', 'success');
+    }
+  } catch(e) {
+    // 실패 시 빈 행 추가 (수동 입력)
+    L.weeks.push([nextStr, null, null, null]);
+    saveLedger(); render();
+    showToast('자동입력 실패 — 수동으로 입력하세요', 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '+ 다음 주 추가 (야후 자동)';
+  }
+}
+
+// ============================================================
+//  설정
+// ============================================================
+function loadCfgUI() {
+  const c = L.cfg;
+  document.getElementById('cfgSeed').value = c.seed;
+  document.getElementById('cfgCashAdj').value = c.cashAdj || 0;
+  document.getElementById('cfgMinPct').value = c.minPct;
+  document.getElementById('cfgInitPct').value = c.initPct;
+  document.getElementById('cfgB1').value = c.bands.b1;
+  document.getElementById('cfgB2').value = c.bands.b2;
+  document.getElementById('cfgB3').value = c.bands.b3;
+  document.getElementById('cfgB4').value = c.bands.b4;
+  document.getElementById('rsxh').value = c.rates['초고평'].sell;
+  document.getElementById('rbxh').value = c.rates['초고평'].buy;
+  document.getElementById('rsh').value = c.rates['고평가'].sell;
+  document.getElementById('rbh').value = c.rates['고평가'].buy;
+  document.getElementById('rsm').value = c.rates['중간가'].sell;
+  document.getElementById('rbm').value = c.rates['중간가'].buy;
+  document.getElementById('rsl').value = c.rates['저평가'].sell;
+  document.getElementById('rbl').value = c.rates['저평가'].buy;
+  document.getElementById('rsxl').value = c.rates['초저평'].sell;
+  document.getElementById('rbxl').value = c.rates['초저평'].buy;
+}
+function saveCfgUI() {
+  const g = id => parseFloat(document.getElementById(id).value);
+  L.cfg.seed = g('cfgSeed'); L.cfg.cashAdj = g('cfgCashAdj');
+  L.cfg.minPct = g('cfgMinPct'); L.cfg.initPct = g('cfgInitPct');
+  L.cfg.bands = { b1:g('cfgB1'), b2:g('cfgB2'), b3:g('cfgB3'), b4:g('cfgB4') };
+  L.cfg.rates = {
+    '초고평':{sell:g('rsxh'),buy:g('rbxh')}, '고평가':{sell:g('rsh'),buy:g('rbh')},
+    '중간가':{sell:g('rsm'),buy:g('rbm')}, '저평가':{sell:g('rsl'),buy:g('rbl')},
+    '초저평':{sell:g('rsxl'),buy:g('rbxl')},
+  };
+  saveLedger(); render();
+  showToast('⚙️ 설정 저장됨', 'success');
+}
+
+// ============================================================
+//  토스트 / Firebase 동기화 (동파법 패턴)
+// ============================================================
+let toastTimer = null;
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type||'');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.className = 'toast ' + (type||''), 2500);
+}
+
+const SYNC = { enabled: false, unsubscribe: null, lastAt: null };
+function docRef() {
+  if (!firebaseUser || !firebaseDb) return null;
+  return firebaseDb.collection('widae_users').doc(firebaseUser.uid);
+}
+function deviceLabel() {
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad/i.test(ua)) return 'iPhone';
+  if (/Android/i.test(ua)) return 'Android';
+  if (/Mac/i.test(ua)) return 'Mac';
+  if (/Windows/i.test(ua)) return 'Windows';
+  return 'Web';
+}
+function setSyncUI(status, err) {
+  const btn = document.getElementById('loginBtn');
+  const label = document.getElementById('loginBtnLabel');
+  const icon = document.getElementById('loginBtnIcon');
+  if (!SYNC.enabled) {
+    btn.classList.remove('logged-in');
+    icon.textContent = String.fromCodePoint(128272);
+    label.textContent = '로그인';
+    return;
+  }
+  btn.classList.add('logged-in');
+  icon.textContent = '';
+  const name = (firebaseUser && (firebaseUser.displayName||firebaseUser.email||'').split(/[\s@]/)[0]) || '';
+  const cls = status==='syncing'||status==='pending' ? 'syncing' : (status==='error' ? 'error' : '');
+  label.innerHTML = '<span class="sync-indicator ' + cls + '"></span>' + name;
+  btn.title = status==='error' ? ('오류: '+(err||'')) : ('동기화: ' + (SYNC.lastAt?SYNC.lastAt.toLocaleTimeString():'-'));
+}
+async function upload() {
+  if (!firebaseUser) return false;
+  setSyncUI('syncing');
+  try {
+    await docRef().set({
+      sheet: localStorage.getItem(STORAGE_KEY) || '',
+      sheetUpdatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      device: deviceLabel(),
+    }, { merge: true });
+    SYNC.lastAt = new Date();
+    setSyncUI('synced');
+    return true;
+  } catch(e) { setSyncUI('error', e.message); return false; }
+}
+async function download() {
+  if (!firebaseUser) return false;
+  setSyncUI('syncing');
+  try {
+    const doc = await docRef().get();
+    if (!doc.exists || !doc.data().sheet) return await upload();
+    _origSet(STORAGE_KEY, doc.data().sheet);
+    L = loadLedger(); loadCfgUI(); render();
+    setSyncUI('synced');
+    return true;
+  } catch(e) { setSyncUI('error', e.message); return false; }
+}
+function startListen() {
+  if (!firebaseUser) return;
+  if (SYNC.unsubscribe) SYNC.unsubscribe();
+  let first = true;
+  SYNC.unsubscribe = docRef().onSnapshot({ includeMetadataChanges: true }, (doc) => {
+    if (first) { first = false; return; }
+    if (doc.metadata.hasPendingWrites) return;
+    if (doc.exists && doc.data().sheet && doc.data().sheet !== localStorage.getItem(STORAGE_KEY)) {
+      _origSet(STORAGE_KEY, doc.data().sheet);
+      L = loadLedger(); loadCfgUI(); render();
+      showToast('🔄 다른 기기에서 동기화됨', 'success');
+    }
+  }, (err) => setSyncUI('error', err.message));
+}
+const _origSet = localStorage.setItem.bind(localStorage);
+let upTimer = null;
+localStorage.setItem = function(k, v) {
+  _origSet(k, v);
+  if (k === STORAGE_KEY && SYNC.enabled) {
+    setSyncUI('pending');
+    if (upTimer) clearTimeout(upTimer);
+    upTimer = setTimeout(upload, 1500);
+  }
+};
+async function loginGoogle() {
+  if (!firebaseEnabled) { alert('Firebase 초기화 실패. 광고차단기를 끄고 새로고침하세요.'); return; }
+  try {
+    const result = await firebaseAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    firebaseUser = result.user;
+    SYNC.enabled = true;
+    const doc = await docRef().get();
+    const localData = localStorage.getItem(STORAGE_KEY);
+    const hasCloud = doc.exists && doc.data().sheet && doc.data().sheet.length > 10;
+    if (hasCloud && localData && doc.data().sheet !== localData) {
+      const msg = '클라우드에 데이터가 있습니다.\n[확인] 클라우드 → 이 기기\n[취소] 이 기기 → 클라우드';
+      if (confirm(msg)) await download(); else await upload();
+    } else if (hasCloud) { await download(); }
+    else { await upload(); }
+    startListen();
+    setSyncUI('synced');
+    showToast('✅ 동기화 활성화', 'success');
+  } catch(e) {
+    if (e.code === 'auth/popup-closed-by-user') return;
+    if (e.code === 'auth/popup-blocked') { alert('팝업이 차단됨. 주소창 옆 팝업 허용을 눌러주세요.'); return; }
+    if (e.code === 'auth/unauthorized-domain') { alert('도메인 미승인: Firebase 콘솔 > Authentication > Settings > 승인된 도메인에 추가:\n' + location.hostname); return; }
+    alert('로그인 실패: ' + e.message);
+  }
+}
+function onLoginClick() {
+  if (SYNC.enabled) {
+    const c = prompt((firebaseUser&&firebaseUser.email||'') + '\n\n1 - 지금 업로드\n2 - 클라우드에서 다운로드\n3 - 로그아웃\n4 - 취소', '1');
+    if (c === '1') upload().then(()=>showToast('동기화 완료','success'));
+    else if (c === '2') { if (confirm('클라우드로 덮어씁니다. 계속?')) download(); }
+    else if (c === '3') {
+      if (SYNC.unsubscribe) { SYNC.unsubscribe(); SYNC.unsubscribe = null; }
+      firebaseAuth.signOut().then(() => {
+        firebaseUser = null; SYNC.enabled = false; setSyncUI('logged-out');
+        showToast('로그아웃됨','success');
+      });
+    }
+  } else { loginGoogle(); }
+}
+function initAuth() {
+  if (!firebaseEnabled) return;
+  firebaseAuth.onAuthStateChanged((user) => {
+    if (user) { firebaseUser = user; SYNC.enabled = true; setSyncUI('synced'); startListen(); }
+    else { firebaseUser = null; SYNC.enabled = false; setSyncUI('logged-out'); }
+  });
+}
+
+// ============================================================
+//  초기화
+// ============================================================
+document.getElementById('addWeekBtn').addEventListener('click', addWeek);
+document.getElementById('saveCfgBtn').addEventListener('click', saveCfgUI);
+document.getElementById('resetBtn').addEventListener('click', () => {
+  if (confirm('⚠️ 원장 전체를 초기 시트 상태로 되돌립니다. 계속할까요?')) {
+    localStorage.removeItem(STORAGE_KEY);
+    L = defaultLedger(); saveLedger(); loadCfgUI(); render();
+  }
+});
+document.getElementById('cfgTrigger').addEventListener('click', () => {
+  document.getElementById('cfgContent').classList.toggle('open');
+});
+document.getElementById('loginBtn').addEventListener('click', onLoginClick);
+
+loadCfgUI();
+render();
+initAuth();
+</script>
+</body>
+</html>
